@@ -1,0 +1,24 @@
+name: Keep Alive
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Render service
+        run: |
+          http_code=$(curl -s -o /tmp/ping.out -w '%{http_code}' -m 60 "$RENDER_URL/api/ping")
+          echo "HTTP $http_code"
+          if [ "$http_code" != "200" ]; then
+            cat /tmp/ping.out
+            exit 1
+          fi
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
