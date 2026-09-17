@@ -22,6 +22,10 @@ router.get('/', (req, res) => {
   });
 });
 
+router.get('/ping', (req, res) => {
+  res.json({ status: 'ok', ts: Date.now() });
+});
+
 router.use('/auth', authRoutes);
 router.use('/complaints', complaintRoutes);
 router.use('/assistant', assistantRoutes);
