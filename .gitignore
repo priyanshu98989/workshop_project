@@ -1,0 +1,6 @@
+silverking/
+*.log
+run-*.log
+node_modules/
+.next/
+logs/
