@@ -13,6 +13,7 @@ export default function ReportIssue() {
   const [location, setLocation] = useState(null);
   const [locationLoading, setLocationLoading] = useState(true);
   const [cameraState, setCameraState] = useState('starting');
+  const [facing, setFacing] = useState('environment');
   const [note, setNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
@@ -42,17 +43,20 @@ export default function ReportIssue() {
       setLocationLoading(false);
     }
 
-    startCamera();
+    startCamera(facing);
   }, []);
 
-  const startCamera = () => {
+  const startCamera = (facingMode) => {
     if (!navigator.mediaDevices?.getUserMedia) {
       setCameraState('unsupported');
       return;
     }
     setCameraState('starting');
+    if (videoRef.current?.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach((t) => t.stop());
+    }
     navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: 'environment' } })
+      .getUserMedia({ video: { facingMode } })
       .then((stream) => {
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -63,6 +67,14 @@ export default function ReportIssue() {
         console.error('Camera error:', err);
         setCameraState('error');
       });
+  };
+
+  const toggleCamera = () => {
+    const next = facing === 'environment' ? 'user' : 'environment';
+    setFacing(next);
+    setImage(null);
+    setResult(null);
+    startCamera(next);
   };
 
   const capturePhoto = () => {
@@ -196,6 +208,20 @@ export default function ReportIssue() {
               <div className="overflow-hidden rounded-2xl border border-slate-700/50 bg-black shadow-2xl">
                 <div className="relative aspect-[4/5] w-full">
                   <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+
+                  {cameraState === 'ready' && (
+                    <button
+                      onClick={toggleCamera}
+                      className="absolute right-4 top-4 z-10 grid h-11 w-11 place-items-center rounded-full border border-white/30 bg-slate-950/60 text-white shadow-lg backdrop-blur transition-all active:scale-90"
+                      title={facing === 'environment' ? 'Switch to front camera' : 'Switch to back camera'}
+                      aria-label="Switch camera"
+                    >
+                      <Icon
+                        paths={['M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4']}
+                        className="h-5 w-5"
+                      />
+                    </button>
+                  )}
 
                   {/* Scan overlay */}
                   <div className="pointer-events-none absolute inset-0 grid place-items-center">
