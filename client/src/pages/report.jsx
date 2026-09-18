@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth, ensureGuestAuth } from '../lib/auth';
 import ThemeToggle from '../components/ThemeToggle';
+import Icon from '../components/Icon';
 
 export default function ReportIssue() {
   const router = useRouter();
@@ -213,7 +214,12 @@ export default function ReportIssue() {
 
                   {cameraState === 'error' && (
                     <div className="absolute inset-0 grid grid-cols-1 place-content-center place-items-center gap-3 bg-slate-950/90 p-6 text-center">
-                      <div className="text-4xl">📷</div>
+                      <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-800/60">
+                        <Icon
+                          paths={['M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z', 'M15 13a3 3 0 11-6 0 3 3 0 016 0z']}
+                          className="h-7 w-7 text-cyan-400"
+                        />
+                      </div>
                       <p className="text-sm text-slate-400">Camera unavailable. Upload a photo instead.</p>
                       <label className="btn-primary cursor-pointer text-sm">
                         <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
@@ -240,7 +246,17 @@ export default function ReportIssue() {
                   {result && (
                     <div className={`absolute inset-0 grid place-items-center bg-slate-950/60 backdrop-blur-sm`}>
                       <div className="text-center">
-                        <div className="animate-scale-in text-5xl">{result.isDuplicate ? '⚠️' : '✅'}</div>
+                        {result.isDuplicate ? (
+                          <Icon
+                            paths={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']}
+                            className="mx-auto h-16 w-16 text-amber-400"
+                          />
+                        ) : (
+                          <Icon
+                            paths={['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z']}
+                            className="mx-auto h-16 w-16 text-emerald-400"
+                          />
+                        )}
                         <p className="mt-3 text-sm font-semibold text-white">
                           {result.isDuplicate ? 'Duplicate Detected' : 'Complaint Registered'}
                         </p>
@@ -338,7 +354,17 @@ export default function ReportIssue() {
             <div className={`mt-6 animate-slide-up rounded-xl border p-5 ${result.isDuplicate ? 'border-amber-500/30 bg-amber-500/10' : 'border-emerald-500/30 bg-emerald-500/10'}`}>
               <div className="grid grid-flow-col auto-cols-max items-start gap-3">
                 <div className={`grid h-10 w-10 place-items-center rounded-full text-lg ${result.isDuplicate ? 'bg-amber-500/20' : 'bg-emerald-500/20'}`}>
-                  {result.isDuplicate ? '⚠️' : '✅'}
+                  {result.isDuplicate ? (
+                    <Icon
+                      paths={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']}
+                      className="h-5 w-5"
+                    />
+                  ) : (
+                    <Icon
+                      paths={['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z']}
+                      className="h-5 w-5"
+                    />
+                  )}
                 </div>
                 <div className="min-w-0">
                   <p className={`font-bold ${result.isDuplicate ? 'text-amber-300' : 'text-emerald-300'}`}>

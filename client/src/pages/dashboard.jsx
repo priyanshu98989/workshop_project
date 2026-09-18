@@ -5,15 +5,44 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth } from '../lib/auth';
 import ThemeToggle from '../components/ThemeToggle';
+import Icon from '../components/Icon';
 
 const categoryMeta = {
-  pothole: { label: 'Pothole', icon: '🕳️', color: 'bg-amber-500/20 text-amber-300' },
-  garbage: { label: 'Garbage', icon: '🗑️', color: 'bg-lime-500/20 text-lime-300' },
-  'water leakage': { label: 'Water Leakage', icon: '💧', color: 'bg-cyan-500/20 text-cyan-300' },
-  'broken streetlight': { label: 'Broken Light', icon: '💡', color: 'bg-yellow-500/20 text-yellow-300' },
-  'road obstruction': { label: 'Obstruction', icon: '🚧', color: 'bg-orange-500/20 text-orange-300' },
-  'drainage blockage': { label: 'Drainage Block', icon: '🌀', color: 'bg-blue-500/20 text-blue-300' },
-  other: { label: 'Other', icon: '📌', color: 'bg-purple-500/20 text-purple-300' },
+  pothole: {
+    label: 'Pothole',
+    icon: ['M12 21a9 9 0 100-18 9 9 0 000 18zm0-4a5 5 0 100-10 5 5 0 000 10z'],
+    color: 'bg-amber-500/20 text-amber-300',
+  },
+  garbage: {
+    label: 'Garbage',
+    icon: ['M3 6h18', 'M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6', 'M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2', 'M10 11v6', 'M14 11v6'],
+    color: 'bg-lime-500/20 text-lime-300',
+  },
+  'water leakage': {
+    label: 'Water Leakage',
+    icon: ['M12 2.69l5.66 5.66a8 8 0 11-11.31 0z'],
+    color: 'bg-cyan-500/20 text-cyan-300',
+  },
+  'broken streetlight': {
+    label: 'Broken Light',
+    icon: ['M9.663 17h4.673', 'M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z'],
+    color: 'bg-yellow-500/20 text-yellow-300',
+  },
+  'road obstruction': {
+    label: 'Obstruction',
+    icon: ['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z'],
+    color: 'bg-orange-500/20 text-orange-300',
+  },
+  'drainage blockage': {
+    label: 'Drainage Block',
+    icon: ['M12 6v12', 'M17 13l-5 5-5-5', 'M5 21h14'],
+    color: 'bg-blue-500/20 text-blue-300',
+  },
+  other: {
+    label: 'Other',
+    icon: ['M6 5a2 2 0 012-2h8a2 2 0 012 2v14l-6-4-6 4V5z'],
+    color: 'bg-purple-500/20 text-purple-300',
+  },
 };
 
 const severityMeta = {
@@ -160,10 +189,30 @@ export default function Dashboard() {
 
           {/* Stats */}
           <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <StatCard label="Total Reports" value={stats.total} icon="📋" accent="text-cyan-400" />
-            <StatCard label="Pending" value={stats.pending} icon="⏳" accent="text-amber-400" />
-            <StatCard label="Resolved" value={stats.resolved} icon="✅" accent="text-emerald-400" />
-            <StatCard label="High Severity" value={stats.high} icon="🚨" accent="text-red-400" />
+            <StatCard
+              label="Total Reports"
+              value={stats.total}
+              icon={['M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4']}
+              accent="text-cyan-400"
+            />
+            <StatCard
+              label="Pending"
+              value={stats.pending}
+              icon={['M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z']}
+              accent="text-amber-400"
+            />
+            <StatCard
+              label="Resolved"
+              value={stats.resolved}
+              icon={['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z']}
+              accent="text-emerald-400"
+            />
+            <StatCard
+              label="High Severity"
+              value={stats.high}
+              icon={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']}
+              accent="text-red-400"
+            />
           </div>
 
           {/* Filters */}
@@ -199,7 +248,12 @@ export default function Dashboard() {
 
             {error && (
               <div className="glass-card border-red-500/30 py-12 text-center">
-                <div className="text-3xl">📡</div>
+                <div className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-red-500/10">
+                  <Icon
+                    paths={['M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']}
+                    className="h-6 w-6 text-red-400"
+                  />
+                </div>
                 <p className="mt-3 text-sm font-medium text-red-300">Could not reach the server</p>
                 <p className="mt-1 text-xs text-slate-500">{error}</p>
                 <button onClick={fetchComplaints} className="mt-4 rounded-lg bg-slate-800 px-4 py-2 text-xs font-semibold text-white">
@@ -210,7 +264,12 @@ export default function Dashboard() {
 
             {!loading && !error && filtered.length === 0 && (
               <div className="glass-card py-16 text-center">
-                <div className="text-4xl">🎉</div>
+                <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-slate-800/50">
+                  <Icon
+                    paths={['M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z']}
+                    className="h-7 w-7 text-slate-400"
+                  />
+                </div>
                 <p className="mt-3 text-sm font-medium text-slate-400">No complaints found</p>
                 <Link href="/report" className="mt-4 inline-block text-sm font-semibold text-cyan-400 hover:text-cyan-300">
                   Report the first one →
@@ -230,8 +289,8 @@ export default function Dashboard() {
                     style={{ animationDelay: `${Math.min(i * 0.05, 0.5)}s` }}
                   >
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[auto_1fr]">
-                      <div className="grid h-20 w-20 place-items-center rounded-xl bg-slate-800/50 text-4xl transition-transform duration-300 group-hover:scale-105">
-                        {cat.icon}
+                      <div className="grid h-20 w-20 place-items-center rounded-xl bg-slate-800/50 transition-transform duration-300 group-hover:scale-105">
+                        <Icon paths={cat.icon} className="h-8 w-8 text-slate-400" />
                       </div>
                       <div className="min-w-0">
                         <div className="grid grid-cols-[1fr_auto] items-start justify-between gap-2">
@@ -242,7 +301,9 @@ export default function Dashboard() {
                           {c.description || 'No description provided.'}
                         </p>
                         <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(auto,auto))] items-center gap-2">
-                          <span className={`badge ${cat.color}`}>{cat.icon} {cat.label}</span>
+                          <span className={`badge ${cat.color}`}>
+                          <Icon paths={cat.icon} className="h-3 w-3" /> {cat.label}
+                        </span>
                           <span className={`badge ${sev.color}`}>Severity: {sev.label}</span>
                           <span className={`badge ${statusColor[c.status] || statusColor.Pending}`}>
                             <span className={`mr-1 h-1.5 w-1.5 rounded-full ${
@@ -264,14 +325,22 @@ export default function Dashboard() {
                           </select>
                           {c.status === 'Resolved' && c.resolvedAt && (
                             <span className="badge bg-emerald-500/10 text-emerald-300">
-                              ✅ {timeAgo(c.resolvedAt)}
+                              <Icon paths={['M5 13l4 4L19 7']} className="h-3 w-3" /> {timeAgo(c.resolvedAt)}
                             </span>
                           )}
                           <span className="badge bg-slate-700/50 text-slate-300">
-                            🤝 {c.supportScore || 1}
+                            <Icon
+                              paths={['M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z']}
+                              className="h-3 w-3"
+                            />
+                            Support {c.supportScore || 1}
                           </span>
                           <span className="badge bg-slate-700/50 text-slate-300">
-                            📍 {(c.location?.coordinates || []).map((n) => n.toFixed(4)).join(', ')}
+                            <Icon
+                              paths={['M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z', 'M15 11a3 3 0 11-6 0 3 3 0 016 0z']}
+                              className="h-3 w-3"
+                            />
+                            {(c.location?.coordinates || []).map((n) => n.toFixed(4)).join(', ')}
                           </span>
                         </div>
                       </div>
@@ -289,7 +358,9 @@ export default function Dashboard() {
 function StatCard({ label, value, icon, accent }) {
   return (
     <div className="glass-card grid grid-cols-[auto_1fr] items-center gap-4 p-5">
-      <div className="grid h-12 w-12 place-items-center rounded-xl bg-slate-800/50 text-2xl">{icon}</div>
+      <div className="grid h-12 w-12 place-items-center rounded-xl bg-slate-800/50">
+        <Icon paths={icon} className="h-6 w-6 text-slate-400" />
+      </div>
       <div>
         <div className={`text-2xl font-bold ${accent}`}>{value}</div>
         <div className="text-xs font-medium text-slate-500 uppercase tracking-wider">{label}</div>

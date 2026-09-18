@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth, ensureGuestAuth } from '../lib/auth';
 import ThemeToggle from '../components/ThemeToggle';
+import Icon from '../components/Icon';
 
 const SUGGESTIONS = [
   'Mera dashboard kaise kaam karta hai?',
@@ -34,7 +35,7 @@ export default function Assistant() {
           {
             role: 'assistant',
             content:
-              'Namaste! 🎉 Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?',
+              'Namaste! Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?',
           },
         ]);
       });
@@ -43,7 +44,7 @@ export default function Assistant() {
         {
           role: 'assistant',
           content:
-            'Namaste! 🎉 Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?',
+            'Namaste! Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?',
         },
       ]);
     }
@@ -282,10 +283,13 @@ export default function Assistant() {
               <div className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-2">
                 <button
                   onClick={() => document.getElementById('chat-image-input')?.click()}
-                  className="grid h-12 w-12 place-items-center rounded-xl border border-slate-700/60 bg-slate-800/50 text-lg transition-colors hover:border-cyan-500/50 hover:bg-slate-800"
+                  className="grid h-12 w-12 place-items-center rounded-xl border border-slate-700/60 bg-slate-800/50 text-slate-400 transition-colors hover:border-cyan-500/50 hover:bg-slate-800"
                   title="Attach photo"
                 >
-                  📷
+                  <Icon
+                    paths={['M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z', 'M15 13a3 3 0 11-6 0 3 3 0 016 0z']}
+                    className="h-5 w-5"
+                  />
                 </button>
                 <input
                   id="chat-image-input"
@@ -309,25 +313,36 @@ export default function Assistant() {
                 <button
                   onClick={handleMic}
                   disabled={!recognitionSupported}
-                  className={`grid h-12 w-12 place-items-center rounded-xl border text-lg transition-colors ${
+                  className={`grid h-12 w-12 place-items-center rounded-xl border text-slate-400 transition-colors ${
                     listening
-                      ? 'border-red-500/60 bg-red-500/20 animate-pulse-slow'
+                      ? 'border-red-500/60 bg-red-500/20 text-red-400 animate-pulse-slow'
                       : 'border-slate-700/60 bg-slate-800/50 hover:border-cyan-500/50'
                   } disabled:opacity-40`}
                   title={listening ? 'Stop listening' : 'Speak'}
                 >
-                  {listening ? '⏹️' : '🎤'}
+                  {listening ? (
+                    <Icon paths={['M6 6h12v12H6z']} className="h-4 w-4" strokeWidth={2.2} />
+                  ) : (
+                    <Icon paths={['M12 16a4 4 0 004-4V6a4 4 0 00-8 0v6a4 4 0 004 4z', 'M5 12a7 7 0 0014 0', 'M12 19v3']} className="h-5 w-5" />
+                  )}
                 </button>
                 <button
                   onClick={() => setSpeak((s) => !s)}
-                  className={`grid h-12 w-12 place-items-center rounded-xl border text-lg transition-colors ${
+                  className={`grid h-12 w-12 place-items-center rounded-xl border text-slate-400 transition-colors ${
                     speak
-                      ? 'border-cyan-500/50 bg-cyan-500/10 hover:bg-cyan-500/20'
+                      ? 'border-cyan-500/50 bg-cyan-500/10 text-cyan-400 hover:bg-cyan-500/20'
                       : 'border-slate-700/60 bg-slate-800/50 opacity-50 hover:opacity-100'
                   }`}
                   title={speak ? 'Voice reply on' : 'Voice reply off'}
                 >
-                  {speak ? '🔊' : '🔇'}
+                  {speak ? (
+                    <Icon
+                      paths={['M11 5L6 9H2v6h4l5 4V5z', 'M15.54 8.46a5 5 0 010 7.07', 'M19.07 4.93a10 10 0 010 14.14']}
+                      className="h-5 w-5"
+                    />
+                  ) : (
+                    <Icon paths={['M11 5L6 9H2v6h4l5 4V5z', 'M22 9l-6 6', 'M16 9l6 6']} className="h-5 w-5" />
+                  )}
                 </button>
                 <button
                   onClick={() => sendMessage()}
@@ -342,7 +357,7 @@ export default function Assistant() {
               </div>
               {!recognitionSupported && (
                 <p className="text-center text-[10px] text-slate-600">
-                  🎤 Voice input ab is browser me support nahi hai — Chrome try karo. Voice reply chrome/firefox me chalta hai.
+                  Voice input ab is browser me support nahi hai — Chrome try karo. Voice reply chrome/firefox me chalta hai.
                 </p>
               )}
             </div>
@@ -374,10 +389,27 @@ function MessageBubble({ msg }) {
     <div className="flex justify-start animate-slide-up">
       <div className="max-w-[85%]">
         <div className="mb-1 grid grid-flow-col auto-cols-max items-center gap-1.5 px-1">
-          <span className="badge bg-cyan-500/15 text-cyan-400">🤖 Assistant</span>
-          {msg.type === 'web' && <span className="badge bg-purple-500/15 text-purple-300">🌐 Web Search</span>}
-          {msg.type === 'image' && <span className="badge bg-emerald-500/15 text-emerald-300">🖼️ Image</span>}
-          {msg.type === 'civic' && <span className="badge bg-blue-500/15 text-blue-300">🏛️ App</span>}
+          <span className="badge bg-cyan-500/15 text-cyan-400">
+            <Icon paths={['M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z']} className="h-3 w-3" /> Assistant
+          </span>
+          {msg.type === 'web' && (
+            <span className="badge bg-purple-500/15 text-purple-300">
+              <Icon
+                paths={['M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z']}
+                className="h-3 w-3"
+              /> Web Search
+            </span>
+          )}
+          {msg.type === 'image' && (
+            <span className="badge bg-emerald-500/15 text-emerald-300">
+              <Icon paths={['M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z']} className="h-3 w-3" /> Image
+            </span>
+          )}
+          {msg.type === 'civic' && (
+            <span className="badge bg-blue-500/15 text-blue-300">
+              <Icon paths={['M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4']} className="h-3 w-3" /> App
+            </span>
+          )}
         </div>
         <div className="rounded-2xl rounded-bl-sm border border-slate-700/50 bg-slate-800/60 px-4 py-2.5 text-sm leading-relaxed text-slate-200">
           <span className="whitespace-pre-wrap">{msg.content}</span>
@@ -392,7 +424,10 @@ function MessageBubble({ msg }) {
                 rel="noopener noreferrer"
                 className="grid grid-flow-col auto-cols-max items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/30 px-3 py-2 text-xs font-medium text-cyan-300 transition-all hover:border-cyan-500/50 hover:bg-slate-800/60"
               >
-                <span>🔗</span>
+                <Icon
+                  paths={['M13.828 10.172a4 4 0 015.656 0l2.172 2.172a4 4 0 01-5.657 5.657l-1.086-1.086M10.172 13.828a4 4 0 00-5.657-5.657l-2.172 2.172a4 4 0 005.657 5.657l1.086-1.086']}
+                  className="h-3 w-3"
+                />
                 <span className="max-w-[300px] truncate">{r.title || r.url}</span>
                 <span className="rounded-md bg-cyan-500/15 px-2 py-0.5 text-[10px] font-semibold text-cyan-400">
                   Open
