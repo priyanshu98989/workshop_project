@@ -69,6 +69,12 @@ function timeAgo(dateStr) {
   return `${days}d ago`;
 }
 
+function getImageUrl(c) {
+  const img = c.images && c.images[0];
+  if (!img || !img.url) return null;
+  return img.url.startsWith('https://via.placeholder.com') ? null : img.url;
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const [complaints, setComplaints] = useState([]);
@@ -76,6 +82,7 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [viewingImage, setViewingImage] = useState(null);
   const user = getUser();
 
   useEffect(() => {
@@ -282,6 +289,7 @@ export default function Dashboard() {
               filtered.map((c, i) => {
                 const cat = categoryMeta[c.category] || categoryMeta.other;
                 const sev = severityMeta[c.severity] || severityMeta.medium;
+                const photo = getImageUrl(c);
                 return (
                   <div
                     key={c._id || i}
@@ -289,9 +297,22 @@ export default function Dashboard() {
                     style={{ animationDelay: `${Math.min(i * 0.05, 0.5)}s` }}
                   >
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-[auto_1fr]">
-                      <div className="grid h-20 w-20 place-items-center rounded-xl bg-slate-800/50 transition-transform duration-300 group-hover:scale-105">
-                        <Icon paths={cat.icon} className="h-8 w-8 text-slate-400" />
-                      </div>
+                      {photo ? (
+                        <button
+                          onClick={() => setViewingImage(photo)}
+                          className="group/photo relative h-20 w-20 overflow-hidden rounded-xl bg-slate-800/50 focus:outline-none"
+                          title="Click to view full photo"
+                        >
+                          <img src={photo} alt={c.title || 'Complaint photo'} className="h-full w-full object-cover transition-transform duration-300 group-hover/photo:scale-110" />
+                          <span className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 transition-opacity duration-200 group-hover/photo:opacity-100">
+                            <Icon paths={['M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z']} className="h-5 w-5 text-white" />
+                          </span>
+                        </button>
+                      ) : (
+                        <div className="grid h-20 w-20 place-items-center rounded-xl bg-slate-800/50 transition-transform duration-300 group-hover:scale-105">
+                          <Icon paths={cat.icon} className="h-8 w-8 text-slate-400" />
+                        </div>
+                      )}
                       <div className="min-w-0">
                         <div className="grid grid-cols-[1fr_auto] items-start justify-between gap-2">
                           <h3 className="font-semibold text-white">{c.title || 'Untitled report'}</h3>
@@ -351,6 +372,26 @@ export default function Dashboard() {
           </div>
         </main>
       </div>
+
+      {viewingImage && (
+        <div
+          className="fixed inset-0 z-[100] grid place-items-center bg-black/80 p-4 backdrop-blur-sm"
+          onClick={() => setViewingImage(null)}
+        >
+          <div className="relative max-h-[90vh] max-w-[90vw]" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setViewingImage(null)}
+              className="absolute -top-3 -right-3 grid h-9 w-9 place-items-center rounded-full bg-slate-800 text-slate-300 shadow-lg transition-colors hover:bg-red-500/20 hover:text-red-300"
+              title="Close"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <img src={viewingImage} alt="Complaint" className="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain" />
+          </div>
+        </div>
+      )}
     </>
   );
 }

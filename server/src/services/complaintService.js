@@ -53,6 +53,8 @@ async function createComplaint({ userId, longitude, latitude, imageBase64, mimeT
 
   const department = await resolveDepartment(aiResult.category);
 
+  const imageDataUrl = `data:${mimeType || 'image/jpeg'};base64,${imageBase64}`;
+
   const complaint = await complaintRepository.create({
     title: `${aiResult.category.toUpperCase()} reported`,
     description: optionalNote
@@ -61,7 +63,7 @@ async function createComplaint({ userId, longitude, latitude, imageBase64, mimeT
     category: aiResult.category,
     severity: aiResult.severity,
     confidenceScore: aiResult.confidence,
-    images: [{ url: 'https://via.placeholder.com/600x400' }],
+    images: [{ url: imageDataUrl, uploadedAt: new Date() }],
     longitude,
     latitude,
     department: department?._id || null,
