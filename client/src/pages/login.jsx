@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, saveAuth } from '../lib/auth';
+import ThemeToggle from '../components/ThemeToggle';
 
 export default function Login() {
   const router = useRouter();
@@ -60,9 +61,12 @@ export default function Login() {
                 <span className="block text-[10px] uppercase tracking-widest text-slate-500">Account Access</span>
               </div>
             </Link>
-            <Link href="/dashboard" className="rounded-lg px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/50 hover:text-white">
-              Dashboard
-            </Link>
+            <div className="grid grid-flow-col auto-cols-max items-center gap-3">
+              <ThemeToggle />
+              <Link href="/dashboard" className="rounded-lg px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/50 hover:text-white">
+                Dashboard
+              </Link>
+            </div>
           </div>
         </nav>
 

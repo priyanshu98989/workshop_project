@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth } from '../lib/auth';
+import ThemeToggle from '../components/ThemeToggle';
 
 const categoryMeta = {
   pothole: { label: 'Pothole', icon: '🕳️', color: 'bg-amber-500/20 text-amber-300' },
@@ -113,6 +114,7 @@ export default function Dashboard() {
               </div>
             </Link>
             <div className="grid grid-flow-col auto-cols-max items-center gap-3">
+              <ThemeToggle />
               <button
                 onClick={fetchComplaints}
                 className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/50 hover:text-white"

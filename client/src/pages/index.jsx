@@ -1,35 +1,62 @@
 import React from 'react';
 import Head from 'next/head';
 import Link from 'next/link';
+import ThemeToggle from '../components/ThemeToggle';
 
 const features = [
   {
-    icon: '📸',
+    icon: (
+      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
     title: 'Snap & Report',
     description: 'Capture a photo of any civic issue and our AI instantly classifies and routes it.',
   },
   {
-    icon: '🤖',
+    icon: (
+      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+      </svg>
+    ),
     title: 'AI Classification',
     description: 'Gemini-powered analysis identifies issue category, severity, and responsible department.',
   },
   {
-    icon: '📍',
+    icon: (
+      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+      </svg>
+    ),
     title: 'Auto Location',
     description: 'GPS tagging ensures authorities know exactly where the problem is.',
   },
   {
-    icon: '⚡',
+    icon: (
+      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+      </svg>
+    ),
     title: 'Duplicate Detection',
     description: 'Smart deduplication merges duplicate reports and boosts support scores.',
   },
   {
-    icon: '📊',
+    icon: (
+      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+      </svg>
+    ),
     title: 'Live Dashboard',
     description: 'Track every complaint from submission to resolution in real-time.',
   },
   {
-    icon: '🏛️',
+    icon: (
+      <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+      </svg>
+    ),
     title: 'Dept Routing',
     description: 'Automatic assignment to the correct municipal department.',
   },
@@ -70,6 +97,7 @@ export default function Home() {
               </span>
             </div>
             <div className="grid grid-flow-col auto-cols-max items-center gap-3">
+              <ThemeToggle />
               <Link
                 href="/assistant"
                 className="rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm font-semibold text-cyan-400 transition-colors hover:bg-cyan-500/20"
@@ -173,7 +201,7 @@ export default function Home() {
                   className="glass-card group p-6 transition-all duration-300 hover:border-cyan-500/20 hover:glow-cyan"
                   style={{ animationDelay: `${i * 0.1}s` }}
                 >
-                  <div className="mb-4 grid h-12 w-12 place-items-center rounded-xl bg-slate-800 text-2xl transition-transform duration-300 group-hover:scale-110">
+                  <div className="mb-4 grid h-12 w-12 place-items-center rounded-xl bg-slate-800 text-cyan-400 transition-transform duration-300 group-hover:scale-110">
                     {feature.icon}
                   </div>
                   <h3 className="mb-2 text-base font-semibold text-white">{feature.title}</h3>

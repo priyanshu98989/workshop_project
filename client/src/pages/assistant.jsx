@@ -4,6 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth, ensureGuestAuth } from '../lib/auth';
+import ThemeToggle from '../components/ThemeToggle';
 
 const SUGGESTIONS = [
   'Mera dashboard kaise kaam karta hai?',
@@ -195,6 +196,7 @@ export default function Assistant() {
               </div>
             </Link>
             <div className="grid grid-flow-col auto-cols-max items-center gap-2">
+              <ThemeToggle />
               <span className="hidden rounded-full border border-cyan-500/20 bg-cyan-500/10 px-3 py-1.5 text-xs font-medium text-cyan-400 sm:block">
                 {user?.name || 'Citizen'}
               </span>
