@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
+import exifr from 'exifr';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
@@ -12,6 +13,9 @@ export default function ReportIssue() {
   const [image, setImage] = useState(null);
   const [location, setLocation] = useState(null);
   const [locationLoading, setLocationLoading] = useState(true);
+  const [locationSource, setLocationSource] = useState(null);
+  const [locationAccuracy, setLocationAccuracy] = useState(null);
+  const locationSourceRef = useRef(null);
   const [cameraState, setCameraState] = useState('starting');
   const [facing, setFacing] = useState('environment');
   const [note, setNote] = useState('');
@@ -21,6 +25,32 @@ export default function ReportIssue() {
   const videoRef = useRef(null);
   const user = getUser();
 
+  const requestDeviceLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationLoading(false);
+      return;
+    }
+    setLocationLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (locationSourceRef.current === 'image') {
+          setLocationLoading(false);
+          return;
+        }
+        locationSourceRef.current = 'device';
+        setLocationSource('device');
+        setLocationAccuracy(Math.round(pos.coords.accuracy));
+        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setLocationLoading(false);
+      },
+      (err) => {
+        console.error('GPS error:', err);
+        setLocationLoading(false);
+      },
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  };
+
   useEffect(() => {
     if (!isLoggedIn()) {
       ensureGuestAuth().then((token) => {
@@ -28,20 +58,7 @@ export default function ReportIssue() {
       });
     }
 
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-          setLocationLoading(false);
-        },
-        (err) => {
-          console.error('GPS error:', err);
-          setLocationLoading(false);
-        }
-      );
-    } else {
-      setLocationLoading(false);
-    }
+    requestDeviceLocation();
 
     startCamera(facing);
   }, []);
@@ -91,14 +108,51 @@ export default function ReportIssue() {
     setImage(null);
     setResult(null);
     setError(null);
+    if (locationSourceRef.current === 'image') {
+      locationSourceRef.current = null;
+      setLocation(null);
+      requestDeviceLocation();
+    }
   };
 
-  const handleImageUpload = (e) => {
+  const handleImageUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => setImage(reader.result);
     reader.readAsDataURL(file);
+
+    setLocationLoading(true);
+    let gpsFromImage = null;
+
+    try {
+      const gps = await exifr.gps(file);
+      if (gps && typeof gps.latitude === 'number' && typeof gps.longitude === 'number') {
+        gpsFromImage = { lat: gps.latitude, lng: gps.longitude };
+        try {
+          const meta = await exifr.parse(file, ['GPSHPositioningError']);
+          gpsFromImage.accuracy =
+            typeof meta?.GPSHPositioningError === 'number' ? Math.round(meta.GPSHPositioningError) : null;
+        } catch {
+          gpsFromImage.accuracy = null;
+        }
+      }
+    } catch (err) {
+      console.error('EXIF GPS read error:', err);
+    }
+
+    if (gpsFromImage) {
+      locationSourceRef.current = 'image';
+      setLocationSource('image');
+      setLocationAccuracy(gpsFromImage.accuracy);
+      setLocation({ lat: gpsFromImage.lat, lng: gpsFromImage.lng });
+      setLocationLoading(false);
+    } else if (!location || locationSourceRef.current !== 'device') {
+      setLocationSource(null);
+      requestDeviceLocation();
+    } else {
+      setLocationLoading(false);
+    }
   };
 
   const handleSubmit = async () => {
@@ -323,19 +377,30 @@ export default function ReportIssue() {
 
           {/* Status chips */}
           <div className="mt-6 grid grid-cols-2 gap-3">
-            <div className={`grid grid-flow-col auto-cols-max items-center gap-2 rounded-xl border p-3 text-sm ${location && !locationLoading ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
+            <div className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${location && !locationLoading ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
               {locationLoading ? (
                 <div className="h-4 w-4 animate-spin-slow rounded-full border-2 border-slate-500 border-t-transparent" />
               ) : location ? (
-                <svg className="h-4 w-4 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                <svg className="h-4 w-4 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
               ) : (
                 <div className="h-4 w-4 rounded-full border-2 border-slate-600" />
               )}
-              <span className="font-medium">
-                {locationLoading ? 'Locating...' : location ? 'Location Locked' : 'Location Offline'}
-              </span>
+              <div className="min-w-0">
+                <span className="block font-medium">
+                  {locationLoading ? 'Locating...' : location ? 'Location Locked' : 'Location Offline'}
+                </span>
+                {location && !locationLoading && (
+                  <span className="block text-[10px] text-slate-500">
+                    {locationSource === 'image'
+                      ? 'GPS from photo (EXIF)'
+                      : locationSource === 'device' && locationAccuracy
+                      ? `Device GPS \u00B1${locationAccuracy} m`
+                      : 'Device GPS'}
+                  </span>
+                )}
+              </div>
             </div>
             <div className={`grid grid-flow-col auto-cols-max items-center gap-2 rounded-xl border p-3 text-sm ${image ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
               {image ? (
@@ -350,6 +415,49 @@ export default function ReportIssue() {
               <span className="font-medium">{image ? 'Photo Ready' : 'No Photo'}</span>
             </div>
           </div>
+
+          {/* Location coordinates card */}
+          {location && !locationLoading && (
+            <div className="mt-4 animate-slide-up rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
+              <div className="grid grid-cols-1 items-start justify-between gap-2 sm:grid-cols-[1fr_auto]">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-cyan-400">
+                    Location Coordinates
+                  </p>
+                  <div className="mt-2 space-y-1 font-mono text-sm">
+                    <p className="text-white">
+                      Lat <span className="text-cyan-300">{location.lat.toFixed(6)}</span>&nbsp;
+                      <span className="text-slate-500">|</span>&nbsp;
+                      Lng <span className="text-cyan-300">{location.lng.toFixed(6)}</span>
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {formatDMS(location.lat, 'lat')}, {formatDMS(location.lng, 'lng')}
+                    </p>
+                  </div>
+                </div>
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${location.lat},${location.lng}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="grid grid-flow-col auto-cols-max items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20"
+                >
+                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  View on Google Maps
+                </a>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-700/40 pt-3 text-[11px] text-slate-400">
+                <span className="badge bg-slate-700/50 text-slate-300">
+                  Source: {locationSource === 'image' ? 'Photo EXIF GPS' : 'Device GPS'}
+                </span>
+                {locationAccuracy != null && (
+                  <span className="badge bg-slate-700/50 text-slate-300">Accuracy ±{locationAccuracy} m</span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Note */}
           {image && !result && (
@@ -471,6 +579,16 @@ export default function ReportIssue() {
       </div>
     </>
   );
+}
+
+function formatDMS(value, type) {
+  const abs = Math.abs(value);
+  const deg = Math.floor(abs);
+  const minFloat = (abs - deg) * 60;
+  const min = Math.floor(minFloat);
+  const sec = ((minFloat - min) * 60).toFixed(1);
+  const cardinal = type === 'lat' ? (value >= 0 ? 'N' : 'S') : value >= 0 ? 'E' : 'W';
+  return `${deg}°${min}'${sec}"${cardinal}`;
 }
 
 function Step({ active, done, label }) {

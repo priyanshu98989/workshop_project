@@ -34,12 +34,13 @@ exports.findById = async (id) => {
   return Complaint.findById(id).lean();
 };
 
-exports.findNearbyDuplicate = async ({ category, longitude, latitude, maxDistance = DEDUP_RADIUS_METERS }) => {
+exports.findNearbyDuplicate = async ({ category, longitude, latitude, reporterId, maxDistance = DEDUP_RADIUS_METERS }) => {
   if (isMemoryMode()) {
-    return memoryStore.findNearbyDuplicate({ category, longitude, latitude, maxDistance });
+    return memoryStore.findNearbyDuplicate({ category, longitude, latitude, reporterId, maxDistance });
   }
   return Complaint.findOne({
     category,
+    reportedBy: { $ne: reporterId },
     status: { $ne: 'Resolved' },
     location: {
       $near: {

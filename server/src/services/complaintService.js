@@ -39,6 +39,7 @@ async function createComplaint({ userId, longitude, latitude, imageBase64, mimeT
     category: aiResult.category,
     longitude,
     latitude,
+    reporterId: userId,
     maxDistance: DEDUP_RADIUS_METERS,
   });
 

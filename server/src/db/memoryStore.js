@@ -67,9 +67,10 @@ function findComplaintById(id) {
   return complaints.find((c) => c._id === id) || null;
 }
 
-function findNearbyDuplicate({ category, longitude, latitude, maxDistance }) {
+function findNearbyDuplicate({ category, longitude, latitude, reporterId, maxDistance }) {
   return complaints.find(
     (c) =>
+      c.reportedBy !== reporterId &&
       c.category === category &&
       c.status !== 'Resolved' &&
       haversineDistance(
