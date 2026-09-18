@@ -16,6 +16,8 @@ export default function ReportIssue() {
   const [locationSource, setLocationSource] = useState(null);
   const [locationAccuracy, setLocationAccuracy] = useState(null);
   const locationSourceRef = useRef(null);
+  const watchIdRef = useRef(null);
+  const timersRef = useRef([]);
   const [cameraState, setCameraState] = useState('starting');
   const [facing, setFacing] = useState('environment');
   const [note, setNote] = useState('');
@@ -25,30 +27,77 @@ export default function ReportIssue() {
   const videoRef = useRef(null);
   const user = getUser();
 
+  const clearLocationTimers = () => {
+    timersRef.current.forEach((t) => clearTimeout(t));
+    timersRef.current = [];
+  };
+
+  const stopWatching = () => {
+    if (watchIdRef.current != null && navigator.geolocation) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+    }
+    watchIdRef.current = null;
+    clearLocationTimers();
+  };
+
   const requestDeviceLocation = () => {
     if (!navigator.geolocation) {
       setLocationLoading(false);
       return;
     }
+    stopWatching();
     setLocationLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        if (locationSourceRef.current === 'image') {
-          setLocationLoading(false);
-          return;
-        }
+
+    const startedAt = Date.now();
+    let best = null;
+    let settleTimer = null;
+    let finalized = false;
+
+    const finalize = () => {
+      if (finalized) return;
+      finalized = true;
+      stopWatching();
+      if (best && locationSourceRef.current !== 'image') {
         locationSourceRef.current = 'device';
         setLocationSource('device');
-        setLocationAccuracy(Math.round(pos.coords.accuracy));
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocationLoading(false);
-      },
-      (err) => {
-        console.error('GPS error:', err);
-        setLocationLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
-    );
+        setLocationAccuracy(Math.round(best.accuracy));
+        setLocation({ lat: best.latitude, lng: best.longitude });
+      }
+      setLocationLoading(false);
+    };
+
+    const onPosition = (pos) => {
+      if (locationSourceRef.current === 'image' || finalized) {
+        finalize();
+        return;
+      }
+      const { latitude, longitude } = pos.coords;
+      const accuracy = Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : Infinity;
+      if (!best || accuracy < best.accuracy) {
+        best = { latitude, longitude, accuracy };
+      }
+      // Good lock achieved — wait briefly for a stable fix, then finalize early.
+      if (accuracy <= 15 && !settleTimer) {
+        settleTimer = setTimeout(finalize, 1500);
+        timersRef.current.push(settleTimer);
+      }
+      if (Date.now() - startedAt >= 9000) finalize();
+    };
+
+    const onError = (err) => {
+      console.error('GPS error:', err);
+      finalize();
+    };
+
+    watchIdRef.current = navigator.geolocation.watchPosition(onPosition, onError, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0,
+    });
+
+    // Absolute safety cap: works even if the browser never fires a callback (common on some laptops).
+    const hardCap = setTimeout(finalize, 11000);
+    timersRef.current.push(hardCap);
   };
 
   useEffect(() => {
@@ -61,6 +110,8 @@ export default function ReportIssue() {
     requestDeviceLocation();
 
     startCamera(facing);
+
+    return () => stopWatching();
   }, []);
 
   const startCamera = (facingMode) => {
@@ -142,6 +193,7 @@ export default function ReportIssue() {
     }
 
     if (gpsFromImage) {
+      stopWatching();
       locationSourceRef.current = 'image';
       setLocationSource('image');
       setLocationAccuracy(gpsFromImage.accuracy);
