@@ -1,4 +1,4 @@
-const API_BASE = process.env.API_BASE_URL || 'http://localhost:6000';
+const API_BASE = process.env.API_BASE_URL || 'https://civiceye-api-8huk.onrender.com';
 
 module.exports = {
   async rewrites() {
