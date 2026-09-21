@@ -4,3 +4,10 @@ run-*.log
 node_modules/
 .next/
 logs/
+# accidental junk (never commit)
+osv5m/
+dyf
+*.pid
+.live-pid
+.vercel/
+

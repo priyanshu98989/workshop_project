@@ -39,12 +39,9 @@ exports.login = (req, res, next) => {
 };
 
 exports.complaint = (req, res, next) => {
-  const { longitude, latitude, imageBase64 } = req.body || {};
+  const { imageBase64 } = req.body || {};
 
   const errors = [];
-  if (longitude === undefined || latitude === undefined) {
-    errors.push('GPS coordinates are required.');
-  }
   if (!isString(imageBase64) || imageBase64.length < 100) {
     errors.push('A photo (base64) is required.');
   }

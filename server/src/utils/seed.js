@@ -19,7 +19,7 @@ async function seed() {
   });
 
   const roads = await Department.create({
-    name: 'Roads & Public Works',
+    name: 'Roads/Infrastructure',
     categories: ['pothole', 'road obstruction'],
   });
 
@@ -34,6 +34,9 @@ async function seed() {
     address: 'M.I. Road, Ward 5',
     status: 'Pending',
     department: roads._id,
+    departmentName: 'Roads/Infrastructure',
+    priority: 'high',
+    priorityReason: 'Severity high (3 pt) + 2 nearby report(s) within 200m = score 5 → high priority',
     reportedBy: citizen._id,
     supportScore: 4,
     ward: 'Ward 5',

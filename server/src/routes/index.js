@@ -2,6 +2,7 @@ const express = require('express');
 const authRoutes = require('./auth.routes');
 const complaintRoutes = require('./complaint.routes');
 const assistantRoutes = require('./assistant.routes');
+const geolocationRoutes = require('./geolocation.routes');
 
 const router = express.Router();
 
@@ -18,6 +19,9 @@ router.get('/', (req, res) => {
       'GET /api/complaints',
       'PATCH /api/complaints/:id',
       'POST /api/assistant/chat',
+      'GET /api/geolocate/place',
+      'POST /api/geolocate/reverse',
+      'POST /api/geolocate/model',
     ],
   });
 });
@@ -29,5 +33,6 @@ router.get('/ping', (req, res) => {
 router.use('/auth', authRoutes);
 router.use('/complaints', complaintRoutes);
 router.use('/assistant', assistantRoutes);
+router.use('/geolocate', geolocationRoutes);
 
 module.exports = router;

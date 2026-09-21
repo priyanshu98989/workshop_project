@@ -414,6 +414,25 @@ function MessageBubble({ msg }) {
         <div className="rounded-2xl rounded-bl-sm border border-slate-700/50 bg-slate-800/60 px-4 py-2.5 text-sm leading-relaxed text-slate-200">
           <span className="whitespace-pre-wrap">{msg.content}</span>
         </div>
+        {msg.aiAnalysis && (
+          <div className="mt-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(auto,auto))] gap-2">
+              <span className="badge bg-slate-700/50 text-slate-200 capitalize">{msg.aiAnalysis.category}</span>
+              <span className="badge bg-amber-500/20 text-amber-300 capitalize">{msg.aiAnalysis.severity}</span>
+              <span className="badge bg-cyan-500/15 text-cyan-300">{msg.aiAnalysis.department}</span>
+              <span className="badge bg-red-500/20 text-red-300 capitalize">{msg.aiAnalysis.priority} priority</span>
+            </div>
+            <Link
+              href="/report"
+              className="mt-3 grid w-full grid-flow-col auto-cols-max items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-500/25 transition-all hover:brightness-110"
+            >
+              Report this issue — opens AI routing
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
+              </svg>
+            </Link>
+          </div>
+        )}
         {msg.results && msg.results.length > 0 && (
           <div className="mt-2 space-y-1.5">
             {msg.results.map((r, i) => (

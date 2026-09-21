@@ -18,6 +18,17 @@ export default function ReportIssue() {
   const locationSourceRef = useRef(null);
   const watchIdRef = useRef(null);
   const timersRef = useRef([]);
+  const gpsRetriesRef = useRef(0);
+  const [photoSource, setPhotoSource] = useState(null);
+  const [locationFromExif, setLocationFromExif] = useState(false);
+  const [manualLocation, setManualLocation] = useState(null);
+  const [needsLocationChoice, setNeedsLocationChoice] = useState(false);
+  const [allowNoLocation, setAllowNoLocation] = useState(false);
+  const [placeQuery, setPlaceQuery] = useState('');
+  const [placeResults, setPlaceResults] = useState([]);
+  const [placeLoading, setPlaceLoading] = useState(false);
+  const [reverseLoading, setReverseLoading] = useState(false);
+  const [modelLocationLoading, setModelLocationLoading] = useState(false);
   const [cameraState, setCameraState] = useState('starting');
   const [facing, setFacing] = useState('environment');
   const [note, setNote] = useState('');
@@ -47,13 +58,14 @@ export default function ReportIssue() {
     }
     stopWatching();
     setLocationLoading(true);
+    gpsRetriesRef.current += 1;
 
     const startedAt = Date.now();
     let best = null;
     let settleTimer = null;
     let finalized = false;
 
-    const finalize = () => {
+    const finalize = (allowRetry = true) => {
       if (finalized) return;
       finalized = true;
       stopWatching();
@@ -62,6 +74,17 @@ export default function ReportIssue() {
         setLocationSource('device');
         setLocationAccuracy(Math.round(best.accuracy));
         setLocation({ lat: best.latitude, lng: best.longitude });
+        setLocationLoading(false);
+        return;
+      }
+      // No fix yet and nothing better (image EXIF) supplied the location —
+      // give the browser a couple of warm-up attempts before giving up.
+      if (allowRetry && gpsRetriesRef.current < 3 && locationSourceRef.current !== 'image') {
+        gpsRetriesRef.current += 1;
+        const retryTimer = setTimeout(() => requestDeviceLocation(), 1200);
+        timersRef.current.push(retryTimer);
+        setLocationLoading(true);
+        return;
       }
       setLocationLoading(false);
     };
@@ -86,7 +109,7 @@ export default function ReportIssue() {
 
     const onError = (err) => {
       console.error('GPS error:', err);
-      finalize();
+      finalize(err?.code !== 1);
     };
 
     watchIdRef.current = navigator.geolocation.watchPosition(onPosition, onError, {
@@ -153,17 +176,165 @@ export default function ReportIssue() {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(videoRef.current, 0, 0);
     setImage(canvas.toDataURL('image/jpeg'));
+    setPhotoSource('capture');
+    setManualLocation(null);
+    setNeedsLocationChoice(false);
+    setAllowNoLocation(false);
   };
 
   const retakePhoto = () => {
     setImage(null);
     setResult(null);
     setError(null);
+    setManualLocation(null);
+    setNeedsLocationChoice(false);
+    setAllowNoLocation(false);
+    setPhotoSource(null);
+    setLocationFromExif(false);
     if (locationSourceRef.current === 'image') {
       locationSourceRef.current = null;
       setLocation(null);
       requestDeviceLocation();
     }
+  };
+
+  const retryLocation = () => {
+    if (locationSourceRef.current === 'image' && location) return;
+    locationSourceRef.current = null;
+    setLocation(null);
+    if (navigator.geolocation) gpsRetriesRef.current = 0;
+    requestDeviceLocation();
+  };
+
+  const searchPlace = async (q) => {
+    if (!q || q.trim().length < 2) {
+      setPlaceResults([]);
+      return;
+    }
+    setPlaceLoading(true);
+    try {
+      const res = await axios.get(`${API_URL}/api/geolocate/place`, {
+        params: { query: q.trim() },
+        headers: authHeaders(),
+      });
+      setPlaceResults(res.data?.data || []);
+    } catch (err) {
+      console.error('Place search error:', err);
+      setPlaceResults([]);
+    } finally {
+      setPlaceLoading(false);
+    }
+  };
+
+  const pickPlace = (result) => {
+    setManualLocation({ lat: result.lat, lng: result.lon, label: result.displayName });
+    setPlaceResults([]);
+    setPlaceQuery('');
+    setLocation(null);
+    setAllowNoLocation(false);
+    stopWatching();
+  };
+
+  const useCurrentAsLocation = () => {
+    if (!location) {
+      requestDeviceLocation();
+      setError('GPS fix nahi mila abhi — thoda ruk kar dobara try karo.');
+      return;
+    }
+    locationSourceRef.current = 'device';
+    setManualLocation(null);
+    setAllowNoLocation(false);
+    setNeedsLocationChoice(false);
+    stopWatching();
+  };
+
+  const skipLocation = () => {
+    setAllowNoLocation(true);
+    setManualLocation(null);
+    setNeedsLocationChoice(false);
+    stopWatching();
+  };
+
+  const runReverseSearch = async () => {
+    if (!image) return;
+    setReverseLoading(true);
+    setError(null);
+    try {
+      const res = await axios.post(
+        `${API_URL}/api/geolocate/reverse`,
+        { imageDataUrl: image },
+        { headers: authHeaders() }
+      );
+      const found = res.data?.data;
+      if (found?.lat && found?.lon) {
+        setManualLocation({ lat: found.lat, lng: found.lon, label: found.label });
+        setLocation(null);
+        setAllowNoLocation(false);
+        setNeedsLocationChoice(false);
+      } else {
+        setError('Reverse search se koi famous jagah nahi mili. Neeche pin karo ya naam likho.');
+      }
+    } catch (err) {
+      console.error('Reverse search error:', err);
+      setError('Reverse search kaam nahi kiya (API key chahiye). Pin karo ya naam likho.');
+    } finally {
+      setReverseLoading(false);
+    }
+  };
+
+  const runModelLocationTrace = async () => {
+    if (!image) return;
+    setModelLocationLoading(true);
+    setError(null);
+    try {
+      const res = await axios.post(
+        `${API_URL}/api/geolocate/model`,
+        { imageDataUrl: image },
+        { headers: authHeaders() }
+      );
+      const found = res.data?.data;
+      if (found?.found && typeof found.lat === 'number' && typeof found.lng === 'number') {
+        const labelParts = [found.place_name, found.city, found.state, found.country].filter(Boolean);
+        const label = labelParts.length
+          ? `${labelParts.join(', ')}${found.confidence ? ` (AI ~${Math.round(found.confidence * 100)}%)` : ''}`
+          : 'AI-estimated location';
+        setManualLocation({ lat: found.lat, lng: found.lng, label });
+        setLocation(null);
+        setAllowNoLocation(false);
+        setNeedsLocationChoice(false);
+      } else {
+        setError(
+          found?.evidence || found?.message ||
+            'Model ko image se location ke clear clues nahi mile (no landmark/sign). Pin karo ya naam likho.'
+        );
+      }
+    } catch (err) {
+      console.error('Model location trace error:', err);
+      setError('Model location trace kaam nahi kiya (AI geolocation service unavailable). Pin karo ya naam likho.');
+    } finally {
+      setModelLocationLoading(false);
+    }
+  };
+
+  const resolvedLocation = () => {
+    if (locationFromExif && location) {
+      return { lat: location.lat, lng: location.lng, source: 'exif', trusted: true };
+    }
+    if (photoSource === 'capture' && location) {
+      return { lat: location.lat, lng: location.lng, source: 'device', trusted: true };
+    }
+    if (manualLocation) {
+      return {
+        lat: manualLocation.lat,
+        lng: manualLocation.lng,
+        source: manualLocation.label ? 'geocode' : 'pinned',
+        trusted: true,
+      };
+    }
+    if (photoSource === 'gallery' && location && !needsLocationChoice) {
+      return { lat: location.lat, lng: location.lng, source: 'device', trusted: true };
+    }
+    return null;
   };
 
   const handleImageUpload = async (e) => {
@@ -172,12 +343,37 @@ export default function ReportIssue() {
     const reader = new FileReader();
     reader.onload = () => setImage(reader.result);
     reader.readAsDataURL(file);
+    setPhotoSource('gallery');
+    setManualLocation(null);
 
-    setLocationLoading(true);
+    const deviceLocked = !!location && locationSourceRef.current === 'device';
+    // A GPS fix embedded in a previous upload cannot be trusted for this new
+    // photo — drop it so it is re-derived from this file's EXIF or the device.
+    if (locationSourceRef.current === 'image') {
+      locationSourceRef.current = null;
+      setLocation(null);
+    }
+    // Start/keep the GPS watch running WHILE the EXIF read happens, so a photo
+    // without EXIF GPS can never leave the report without a device fix. Previously
+    // the fallback only ran after `await exifr` resolved, so a slow/hanging EXIF
+    // read (common with large phone photos in browsers) meant no location on upload.
+    if (!deviceLocked) {
+      if (navigator.geolocation) gpsRetriesRef.current = 0;
+      requestDeviceLocation();
+    } else {
+      setLocationLoading(false);
+    }
+
     let gpsFromImage = null;
 
     try {
-      const gps = await exifr.gps(file);
+      // Timeout guard: some large/odd photos make exifr hang in the browser.
+      const gps = await Promise.race([
+        exifr.gps(file),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('EXIF GPS read timed out')), 5000)
+        ),
+      ]);
       if (gps && typeof gps.latitude === 'number' && typeof gps.longitude === 'number') {
         gpsFromImage = { lat: gps.latitude, lng: gps.longitude };
         try {
@@ -198,18 +394,37 @@ export default function ReportIssue() {
       setLocationSource('image');
       setLocationAccuracy(gpsFromImage.accuracy);
       setLocation({ lat: gpsFromImage.lat, lng: gpsFromImage.lng });
+      setLocationFromExif(true);
+      setNeedsLocationChoice(false);
+      setAllowNoLocation(false);
       setLocationLoading(false);
-    } else if (!location || locationSourceRef.current !== 'device') {
-      setLocationSource(null);
-      requestDeviceLocation();
+    } else if (photoSource === 'gallery') {
+      // Photo picked from the gallery has no embedded GPS — the device's
+      // CURRENT location is NOT this photo's location. Ask the citizen to
+      // pin the right spot, use current, or submit without a location.
+      setLocationFromExif(false);
+      setNeedsLocationChoice(true);
+      if (!watchIdRef.current) requestDeviceLocation();
+      setLocationLoading(watchIdRef.current != null);
+    } else if (!location) {
+      // No GPS embedded in the photo. The background `requestDeviceLocation`
+      // picks up the device fix when it lands; make sure a watch is still running.
+      if (!watchIdRef.current) requestDeviceLocation();
+      setLocationLoading(watchIdRef.current != null);
     } else {
       setLocationLoading(false);
     }
   };
 
   const handleSubmit = async () => {
-    if (!image || !location) {
-      setError('Camera/photo and Location are both required.');
+    if (!image) {
+      setError('Camera/photo is required.');
+      return;
+    }
+    const resolved = resolvedLocation();
+    const canNoLocation = allowNoLocation;
+    if (!resolved && !canNoLocation) {
+      setError('Photo ki location set karo (pin) ya "Bina Location Submit" chuno.');
       return;
     }
     setLoading(true);
@@ -218,12 +433,19 @@ export default function ReportIssue() {
 
     try {
       const payload = {
-        longitude: location.lng,
-        latitude: location.lat,
         imageBase64: image.split(',')[1],
         mimeType: image.split(';')[0].split(':')[1] || 'image/jpeg',
         optionalNote: note,
       };
+      if (resolved?.trusted) {
+        payload.longitude = resolved.lng;
+        payload.latitude = resolved.lat;
+        payload.locationTrusted = true;
+        payload.locationSource = resolved.source;
+      } else {
+        payload.locationTrusted = false;
+        payload.locationSource = 'not-provided';
+      }
       const baseUrl = API_URL;
       const res = await axios.post(`${baseUrl}/api/complaints`, payload, { headers: authHeaders() });
       setResult(res.data);
@@ -429,19 +651,23 @@ export default function ReportIssue() {
 
           {/* Status chips */}
           <div className="mt-6 grid grid-cols-2 gap-3">
-            <div className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${location && !locationLoading ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
+            <div className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${location || manualLocation || allowNoLocation ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
               {locationLoading ? (
                 <div className="h-4 w-4 animate-spin-slow rounded-full border-2 border-slate-500 border-t-transparent" />
-              ) : location ? (
+              ) : location || manualLocation ? (
+                <svg className="h-4 w-4 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+              ) : allowNoLocation ? (
                 <svg className="h-4 w-4 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
                   <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
                 </svg>
               ) : (
                 <div className="h-4 w-4 rounded-full border-2 border-slate-600" />
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <span className="block font-medium">
-                  {locationLoading ? 'Locating...' : location ? 'Location Locked' : 'Location Offline'}
+                  {locationLoading ? 'Locating...' : location || manualLocation ? 'Location Locked' : allowNoLocation ? 'Submitted without location' : 'Location Required'}
                 </span>
                 {location && !locationLoading && (
                   <span className="block text-[10px] text-slate-500">
@@ -451,6 +677,25 @@ export default function ReportIssue() {
                       ? `Device GPS \u00B1${locationAccuracy} m`
                       : 'Device GPS'}
                   </span>
+                )}
+                {manualLocation && (
+                  <span className="block text-[10px] text-slate-500">
+                    {manualLocation.label ? 'Place search (geocode)' : 'Manually pinned on map'}
+                  </span>
+                )}
+                {allowNoLocation && (
+                  <span className="block text-[10px] text-amber-400">No location saved</span>
+                )}
+                {!location && !locationLoading && !manualLocation && !allowNoLocation && (
+                  <button
+                    onClick={retryLocation}
+                    className="mt-1 grid grid-flow-col auto-cols-max items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-400 transition-colors hover:bg-cyan-500/20"
+                  >
+                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Retry for GPS
+                  </button>
                 )}
               </div>
             </div>
@@ -511,6 +756,167 @@ export default function ReportIssue() {
             </div>
           )}
 
+          {/* Location choice for gallery photos without EXIF GPS */}
+          {photoSource === 'gallery' && !locationFromExif && needsLocationChoice && !manualLocation && (
+            <div className="mt-4 animate-slide-up rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-amber-300">
+                    Photo me GPS data nahi hai
+                  </p>
+                  <p className="mt-1 text-xs text-amber-200/80">
+                    Device ki current location (agar hai) is photo ki location NAHI hai. Neeche photo ki asli jagah batayein, current location use karein, ya bina location submit karein.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-3">
+                <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Jagah ka naam likho (jaise "Taj Mahal, Agra")
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={placeQuery}
+                    onChange={(e) => {
+                      setPlaceQuery(e.target.value);
+                      searchPlace(e.target.value);
+                    }}
+                    placeholder="Place ka naam dhundho..."
+                    className="input-field flex-1"
+                  />
+                  <button
+                    onClick={runReverseSearch}
+                    disabled={reverseLoading}
+                    className="grid grid-flow-col auto-cols-max items-center gap-1.5 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20 disabled:opacity-50"
+                  >
+                    {reverseLoading ? (
+                      <span className="grid grid-flow-col auto-cols-max items-center gap-2">
+                        <div className="h-3.5 w-3.5 animate-spin-slow rounded-full border-2 border-cyan-300 border-t-transparent" />
+                        Searching...
+                      </span>
+                    ) : (
+                      <>
+                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        AI Reverse Search
+                      </>
+                    )}
+                  </button>
+                </div>
+                {placeLoading && (
+                  <div className="mt-2 flex items-center gap-2 text-xs text-slate-400">
+                    <div className="h-3 w-3 animate-spin-slow rounded-full border-2 border-slate-500 border-t-transparent" />
+                    Searching places...
+                  </div>
+                )}
+                {placeResults.length > 0 && (
+                  <ul className="mt-2 max-h-44 overflow-y-auto rounded-xl border border-slate-700/50 bg-slate-900/90">
+                    {placeResults.map((r, i) => (
+                      <li key={i}>
+                        <button
+                          onClick={() => pickPlace(r)}
+                          className="w-full px-3 py-2 text-left text-xs text-slate-300 transition-colors hover:bg-cyan-500/10 hover:text-white"
+                        >
+                          <span className="block font-medium text-cyan-300">
+                            {r.lat.toFixed(5)}, {r.lon.toFixed(5)}
+                          </span>
+                          <span className="block truncate">{r.displayName}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="mt-3">
+                <MapPicker
+                  initial={location ? { lat: location.lat, lng: location.lng } : undefined}
+                  onPick={(lat, lng) => {
+                    setManualLocation({ lat, lng });
+                    setLocation(null);
+                    setAllowNoLocation(false);
+                    stopWatching();
+                  }}
+                />
+              </div>
+
+              <div className="mt-3">
+                <button
+                  onClick={runModelLocationTrace}
+                  disabled={modelLocationLoading}
+                  className="grid w-full grid-flow-col auto-cols-max items-center justify-center gap-2 rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2.5 text-xs font-bold text-purple-300 transition-colors hover:bg-purple-500/20 disabled:opacity-60"
+                >
+                  {modelLocationLoading ? (
+                    <span className="grid grid-flow-col auto-cols-max items-center gap-2">
+                      <div className="h-4 w-4 animate-spin-slow rounded-full border-2 border-purple-300 border-t-transparent" />
+                      Photo analyze ho rahi hai...
+                    </span>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      AI Model se location trace karo (photo se hi)
+                    </>
+                  )}
+                </button>
+                <p className="mt-1.5 text-center text-[10px] text-purple-200/50">
+                  Model photo ke landmarks/signboards dekh kar location banata hai — device ki current location use NAHI karta.
+                </p>
+              </div>
+
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <button
+                  onClick={useCurrentAsLocation}
+                  className="rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-3 py-2.5 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20"
+                >
+                  Current Location Use Karein
+                </button>
+                <button
+                  onClick={skipLocation}
+                  className="rounded-xl border border-slate-700 px-3 py-2.5 text-xs font-semibold text-slate-300 transition-colors hover:border-amber-500/40 hover:text-amber-300"
+                >
+                  Bina Location Submit
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Pinned location summary */}
+          {manualLocation && !locationFromExif && (
+            <div className="mt-4 animate-slide-up rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <svg className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-bold text-emerald-300">Photo ki location set</p>
+                  <p className="mt-0.5 font-mono text-xs text-emerald-200/80">
+                    {manualLocation.lat.toFixed(6)}, {manualLocation.lng.toFixed(6)}
+                  </p>
+                  {manualLocation.label && (
+                    <p className="mt-0.5 text-xs text-slate-400">{manualLocation.label}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    setManualLocation(null);
+                    setNeedsLocationChoice(true);
+                  }}
+                  className="text-xs font-medium text-amber-300 hover:underline"
+                >
+                  Change
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Note */}
           {image && !result && (
             <div className="mt-6 animate-slide-up">
@@ -565,8 +971,28 @@ export default function ReportIssue() {
                           result.complaint.severity === 'medium' ? 'bg-amber-500/20 text-amber-300' :
                           'bg-emerald-500/20 text-emerald-300'
                         } capitalize`}>{result.complaint.severity}</span>
+                        <span className={`badge ${priorityColor(result.complaint.priority)}`}>
+                          {result.complaint.priority || 'medium'} priority
+                        </span>
+                        {result.complaint.departmentName && (
+                          <span className="badge bg-cyan-500/15 text-cyan-300">
+                            {result.complaint.departmentName}
+                          </span>
+                        )}
                         <span className="badge bg-slate-700/50 text-slate-200">{result.complaint.status}</span>
                       </div>
+                      {result.complaint.priorityReason && (
+                        <p className="pt-1 text-slate-400">
+                          Why <span className="font-semibold text-white">{result.complaint.priority}</span>?{' '}
+                          <span dangerouslySetInnerHTML={{ __html: highlightReason(result.complaint.priorityReason) }} />
+                        </p>
+                      )}
+                      {result.aiAnalysis?.executedAction && !result.isDuplicate && (
+                        <p className="pt-1 text-slate-400">
+                          AI action: <span className="font-semibold text-white">created</span> this complaint (routed to{' '}
+                          <span className="text-cyan-300">{result.aiAnalysis.departmentName}</span>).
+                        </p>
+                      )}
                       <p className="pt-1 text-slate-400">
                         Support score: <span className="font-semibold text-white">{result.complaint.supportScore}</span>
                       </p>
@@ -577,6 +1003,54 @@ export default function ReportIssue() {
                   )}
                 </div>
               </div>
+
+              {result.isDuplicate && result.existingComplaint && (
+                <div className="mt-4 rounded-xl border border-amber-500/25 bg-slate-950/40 p-4">
+                  <p className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                    Existing complaint — your report was merged with it
+                  </p>
+                  <div className="mt-3 grid grid-cols-[auto_1fr] gap-3">
+                    {result.existingComplaint.images?.[0]?.url && (
+                      <img
+                        src={result.existingComplaint.images[0].url}
+                        alt="Existing complaint"
+                        className="h-20 w-20 rounded-xl object-cover"
+                      />
+                    )}
+                    <div className="min-w-0 space-y-1.5 text-xs">
+                      <p className="font-semibold text-slate-200">
+                        {result.existingComplaint.title || 'Similar report'}
+                      </p>
+                      <div className="grid grid-cols-[repeat(auto-fill,minmax(auto,auto))] gap-2">
+                        <span className="badge bg-slate-700/50 text-slate-200 capitalize">{result.existingComplaint.category}</span>
+                        <span className="badge bg-slate-700/50 text-slate-200">{result.existingComplaint.status}</span>
+                        <span className="badge bg-slate-700/50 text-slate-200">
+                          Support {result.existingComplaint.supportScore || 1}
+                        </span>
+                        {result.existingComplaint.distanceMeters != null && (
+                          <span className="badge bg-amber-500/15 text-amber-300">
+                            ~{result.existingComplaint.distanceMeters}m away
+                          </span>
+                        )}
+                      </div>
+                      {result.existingComplaint.location?.coordinates && (
+                        <p className="font-mono text-[10px] text-slate-500">
+                          {result.existingComplaint.location.coordinates[1].toFixed(5)},{' '}
+                          {result.existingComplaint.location.coordinates[0].toFixed(5)}
+                        </p>
+                      )}
+                      <p className="text-slate-400">
+                        Linking boosts the existing report&apos;s weight so authorities see more people are affected.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {result.complaint?.aiTimeline && result.complaint.aiTimeline.length > 0 && (
+                <Timeline events={result.complaint.aiTimeline} className="mt-4" />
+              )}
+
               {result.isDuplicate && (
                 <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(auto,auto))] gap-2">
                   <Link href="/dashboard" className="text-xs font-medium text-cyan-400 hover:underline">
@@ -606,7 +1080,7 @@ export default function ReportIssue() {
                   <p className="text-[10px] text-slate-500">AI processes in under 30 seconds</p>
                 </div>
                 <button
-                  disabled={!image || !location || loading}
+                  disabled={!image || (!resolvedLocation() && !allowNoLocation) || loading}
                   onClick={handleSubmit}
                   className="btn-primary sm:min-w-56"
                 >
@@ -630,6 +1104,84 @@ export default function ReportIssue() {
         </main>
       </div>
     </>
+  );
+}
+
+function MapPicker({ initial, onPick }) {
+  const containerRef = useRef(null);
+  const mapRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let L = null;
+
+    const initMap = () => {
+      if (cancelled || mapRef.current || !containerRef.current) return;
+      L = window.L;
+      const center = initial
+        ? [initial.lat, initial.lng]
+        : [21.0, 78.0];
+      const zoom = initial ? 14 : 5;
+      const map = L.map(containerRef.current, { center, zoom });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; OpenStreetMap contributors',
+      }).addTo(map);
+
+      const marker = L.marker(center, { draggable: true }).addTo(map);
+      const emit = (pos) => {
+        onPick?.(pos.lat, pos.lng);
+      };
+      marker.on('dragend', () => emit(marker.getLatLng()));
+      map.on('click', (e) => {
+        const loc = { lat: e.latlng.lat, lng: e.latlng.lng };
+        marker.setLatLng(loc);
+        emit(loc);
+      });
+      mapRef.current = map;
+    };
+
+    let script = document.getElementById('leaflet-js');
+    if (script) {
+      initMap();
+      return () => {
+        cancelled = true;
+        if (mapRef.current) {
+          mapRef.current.remove();
+          mapRef.current = null;
+        }
+      };
+    }
+
+    const link = document.createElement('link');
+    link.id = 'leaflet-css';
+    link.rel = 'stylesheet';
+    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(link);
+    script = document.createElement('script');
+    script.id = 'leaflet-js';
+    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    script.onload = () => {
+      if (!window.L) return;
+      setTimeout(initMap, 0);
+    };
+    document.body.appendChild(script);
+
+    return () => {
+      cancelled = true;
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-slate-700/50">
+      <div ref={containerRef} className="h-52 w-full" />
+      <p className="border-t border-slate-700/50 bg-slate-900 px-3 py-1.5 text-[10px] text-slate-500">
+        Map par click karo ya pin ko drag karo — wahi photo ki location banegi
+      </p>
+    </div>
   );
 }
 
@@ -662,6 +1214,47 @@ function Step({ active, done, label }) {
         )}
       </div>
       <span className={`text-xs font-medium ${active || done ? 'text-white' : 'text-slate-600'}`}>{label}</span>
+    </div>
+  );
+}
+
+function priorityColor(priority) {
+  switch (priority) {
+    case 'critical':
+      return 'bg-purple-500/20 text-purple-300';
+    case 'high':
+      return 'bg-red-500/20 text-red-300';
+    case 'low':
+      return 'bg-emerald-500/20 text-emerald-300';
+    case 'medium':
+    default:
+      return 'bg-amber-500/20 text-amber-300';
+  }
+}
+
+function highlightReason(reason) {
+  return reason.replace(/(critical|high|medium|low) priority/, '<span class="font-semibold text-white">$1 priority</span>');
+}
+
+function Timeline({ events = [], className = '' }) {
+  if (!events || events.length === 0) return null;
+  return (
+    <div className={`rounded-xl border border-slate-700/40 bg-slate-950/40 p-4 ${className}`}>
+      <p className="text-xs font-bold uppercase tracking-wider text-cyan-400">AI Action Timeline</p>
+      <ol className="mt-3 space-y-2.5">
+        {events.map((ev, i) => (
+          <li key={i} className="grid grid-cols-[auto_1fr] items-start gap-3">
+            <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-cyan-500/15 text-[10px] font-bold text-cyan-300">
+              {i + 1}
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-slate-200">{ev.step}</p>
+              {ev.detail && <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{ev.detail}</p>}
+              {ev.ts && <p className="mt-0.5 text-[10px] text-slate-600">{new Date(ev.ts).toLocaleTimeString()}</p>}
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }

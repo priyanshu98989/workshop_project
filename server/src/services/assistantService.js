@@ -1,6 +1,7 @@
 const gemini = require('./geminiService');
 const webSearch = require('./webSearchService');
 const complaintRepository = require('../repositories/complaintRepository');
+const { inferLocationFromImage } = require('./imageGeolocationService');
 const AppError = require('../utils/AppError');
 const logger = require('../utils/logger');
 
@@ -34,6 +35,58 @@ function detectIntent(message, hasImage) {
 }
 
 async function handleImageQuery({ message, history, imageBase64, mimeType }) {
+  const lower = (message || '').toLowerCase();
+  const asksLocation =
+    /(kahan|location|jagah|kaun si jagah|place|where|se li|ki li|yahan|yahin)/.test(lower) &&
+    /(photo|image|imag|pic|ye|is|ka)/.test(lower);
+
+  if (asksLocation) {
+    const loc = await inferLocationFromImage({ imageBase64, mimeType });
+    if (loc && loc.found) {
+      const parts = [
+        `📍 Maine photo ke andar ke clues (signboard, landmark, text, architecture) dekh kar location trace ki hai — current location bilkul use nahi ki.`,
+        `Bina current location ke iska best guess: **${loc.place_name || 'unknown place'}**` +
+          (loc.city ? ` (${[loc.city, loc.state, loc.country].filter(Boolean).join(', ')})` : ''),
+      ];
+      if (loc.area_hint) parts.push(`Area hint: ${loc.area_hint}`);
+      if (loc.landmarks && loc.landmarks.length) {
+        parts.push(`Jo clues mile: ${loc.landmarks.slice(0, 5).join(', ')}`);
+      }
+      parts.push(`Coordinates: ${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)} (confidence ${Math.round(loc.confidence * 100)}%)`);
+      if (loc.evidence) parts.push(`Evidence: ${loc.evidence}`);
+      return { type: 'image', message: clean(parts.join('\n')) };
+    }
+    return {
+      type: 'image',
+      message:
+        '😅 Is photo se location ke clear clues nahi mile (koi dukaan/signboard/landmark nazar nahi aaya). Pin karke ya report page ke "AI Model se location trace" button se try karlen.',
+    };
+  }
+
+  // Agentic step: classify the issue structurally so the assistant can recommend
+  // the exact next backend action (create a complaint) with dept + priority.
+  let civicAnalysis = null;
+  try {
+    const { classifyCivicIssue } = require('./aiService');
+    const { resolveDepartmentName, computePriority } = require('./departmentService');
+    const civic = await classifyCivicIssue(imageBase64, mimeType);
+    if (civic && civic.category && civic.category !== 'other') {
+      const departmentName = resolveDepartmentName(civic.category);
+      const priority = computePriority(civic.severity, 0).priority;
+      civicAnalysis = {
+        category: civic.category,
+        severity: civic.severity,
+        confidence: civic.confidence,
+        department: departmentName,
+        priority,
+        nextAction: 'create_complaint',
+        description: civic.description || '',
+      };
+    }
+  } catch (err) {
+    logger.warn(`Assistant civic classification failed (${err.message})`);
+  }
+
   try {
     const text = await gemini.generate({
       systemPrompt:
@@ -50,9 +103,23 @@ async function handleImageQuery({ message, history, imageBase64, mimeType }) {
       mimeType,
       temperature: 0.3,
     });
-    return { type: 'image', message: clean(text) };
+    const base = { type: 'image', message: clean(text) };
+    if (civicAnalysis) {
+      base.message += `\n\n📋 AI ka fay sa: **${civicAnalysis.category.replace(/-/g, ' ')}** (${civicAnalysis.severity}), department: **${civicAnalysis.department}**, priority: **${civicAnalysis.priority}**. Isko report karne ke liye button dabaiye.`;
+      base.aiAnalysis = civicAnalysis;
+    }
+    return base;
   } catch (err) {
     logger.warn(`Image analysis failed (${err.message})`);
+    if (civicAnalysis) {
+      return {
+        type: 'image',
+        aiAnalysis: civicAnalysis,
+        message:
+          `📋 AI classification: **${civicAnalysis.category}** (${civicAnalysis.severity}), department: **${civicAnalysis.department}**, priority: **${civicAnalysis.priority}**. ` +
+          'Is civic issue ko report karne ke liye neeche button dabaiye.',
+      };
+    }
     return {
       type: 'image',
       message:

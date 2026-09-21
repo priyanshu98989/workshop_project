@@ -1,22 +1,24 @@
 const Department = require('../models/Department');
+const { DEPARTMENT_ROUTING } = require('../config/departments');
 
-const DEPARTMENTS = [
-  {
-    name: 'Roads & Public Works',
-    categories: ['pothole', 'road obstruction', 'street light', 'road'],
-  },
-  {
-    name: 'Water & Sanitation',
-    categories: ['garbage', 'drainage', 'water leakage', 'illegal dumping'],
-  },
-  {
-    name: 'Public Safety',
-    categories: ['security', 'traffic', 'accident', 'safety'],
-  },
-];
+// Department documents are seeded from the same routing config the app uses to
+// assign complaints, so the category → department links always stay in sync.
+function buildDepartments() {
+  const byName = {};
+  const categoriesByName = {};
+  for (const [category, dept] of Object.entries(DEPARTMENT_ROUTING)) {
+    if (!byName[dept.name]) byName[dept.name] = dept.name;
+    (categoriesByName[dept.name] = categoriesByName[dept.name] || []).push(category);
+  }
+  return Object.entries(byName).map(([name]) => ({
+    name,
+    categories: categoriesByName[name],
+  }));
+}
 
 async function ensureDepartments() {
-  for (const dept of DEPARTMENTS) {
+  const departments = buildDepartments();
+  for (const dept of departments) {
     await Department.updateOne(
       { name: dept.name },
       { $setOnInsert: dept },

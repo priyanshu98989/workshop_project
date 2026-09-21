@@ -117,6 +117,12 @@ export default function Home() {
                 Dashboard
               </Link>
               <Link
+                href="/admin"
+                className="rounded-lg px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/50 hover:text-white"
+              >
+                Admin
+              </Link>
+              <Link
                 href="/report"
                 className="rounded-lg bg-gradient-to-r from-cyan-500 to-blue-600 px-5 py-2 text-sm font-semibold text-white shadow-lg shadow-cyan-500/25 transition-all hover:shadow-cyan-500/40 hover:brightness-110"
               >

@@ -51,6 +51,15 @@ const severityMeta = {
   low: { label: 'Low', color: 'bg-emerald-500/20 text-emerald-300' },
 };
 
+const priorityMeta = {
+  critical: { label: 'Critical', color: 'bg-purple-500/20 text-purple-300' },
+  high: { label: 'High', color: 'bg-red-500/20 text-red-300' },
+  medium: { label: 'Medium', color: 'bg-amber-500/20 text-amber-300' },
+  low: { label: 'Low', color: 'bg-emerald-500/20 text-emerald-300' },
+};
+
+const departmentList = ['Roads/Infrastructure', 'Sanitation', 'Electrical', 'Water Department', 'General', 'Unassigned'];
+
 const statusColor = {
   Pending: 'bg-slate-700/50 text-slate-200',
   Acknowledged: 'bg-blue-500/20 text-blue-300',
@@ -82,7 +91,11 @@ export default function Dashboard() {
   const [error, setError] = useState(null);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [departmentFilter, setDepartmentFilter] = useState('all');
+  const [priorityFilter, setPriorityFilter] = useState('all');
   const [viewingImage, setViewingImage] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
   const user = getUser();
 
   useEffect(() => {
@@ -115,14 +128,19 @@ export default function Dashboard() {
     total: complaints.length,
     resolved: complaints.filter((c) => c.status === 'Resolved').length,
     pending: complaints.filter((c) => c.status === 'Pending').length,
+    inProgress: complaints.filter((c) => c.status === 'In Progress').length,
     high: complaints.filter((c) => c.severity === 'high').length,
+    critical: complaints.filter((c) => c.priority === 'critical').length,
   };
 
   const filtered = complaints.filter((c) => {
     const catOk = filter === 'all' || c.category === filter;
+    const statusOk = statusFilter === 'all' || c.status === statusFilter;
+    const deptOk = departmentFilter === 'all' || (c.departmentName || 'Unassigned') === departmentFilter;
+    const priorityOk = priorityFilter === 'all' || (c.priority || 'medium') === priorityFilter;
     const term = search.toLowerCase().trim();
     const searchOk = !term || (c.title || '').toLowerCase().includes(term) || (c.description || '').toLowerCase().includes(term);
-    return catOk && searchOk;
+    return catOk && statusOk && deptOk && priorityOk && searchOk;
   });
 
   return (
@@ -163,6 +181,12 @@ export default function Dashboard() {
               >
                 AI Assistant
               </Link>
+              <Link
+                href="/admin"
+                className="rounded-lg px-3 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/50 hover:text-white"
+              >
+                Admin
+              </Link>
               {user ? (
                 <button
                   onClick={() => {
@@ -195,7 +219,7 @@ export default function Dashboard() {
           </div>
 
           {/* Stats */}
-          <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <div className="mb-8 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <StatCard
               label="Total Reports"
               value={stats.total}
@@ -209,6 +233,12 @@ export default function Dashboard() {
               accent="text-amber-400"
             />
             <StatCard
+              label="In Progress"
+              value={stats.inProgress}
+              icon={['M13 5l7 7-7 7M5 5l7 7-7 7']}
+              accent="text-sky-400"
+            />
+            <StatCard
               label="Resolved"
               value={stats.resolved}
               icon={['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z']}
@@ -220,27 +250,75 @@ export default function Dashboard() {
               icon={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']}
               accent="text-red-400"
             />
+            <StatCard
+              label="Critical Priority"
+              value={stats.critical}
+              icon={['M12 11v5m0 5a9 9 0 110-18 9 9 0 010 18zm0-17v2']}
+              accent="text-purple-400"
+            />
           </div>
 
           {/* Filters */}
-          <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-[1fr_auto] sm:items-center">
+          <div className="mb-6 grid grid-cols-1 gap-3 sm:items-center">
             <div className="grid grid-cols-[repeat(auto-fill,minmax(auto,auto))] gap-2">
               <FilterChip active={filter === 'all'} onClick={() => setFilter('all')} label="All" />
               {Object.entries(categoryMeta).map(([key, meta]) => (
                 <FilterChip key={key} active={filter === key} onClick={() => setFilter(key)} label={meta.label} />
               ))}
             </div>
-            <div className="relative">
-              <svg className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search complaints..."
-                className="input-field pl-9"
-                style={{ width: '220px' }}
-              />
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <label className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Status</span>
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700/50 bg-slate-800/60 px-2 py-1 text-xs font-medium text-slate-300 outline-none focus:border-cyan-500"
+                >
+                  <option value="all">All</option>
+                  {Object.entries(statusColor).map(([s]) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Dept</span>
+                <select
+                  value={departmentFilter}
+                  onChange={(e) => setDepartmentFilter(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700/50 bg-slate-800/60 px-2 py-1 text-xs font-medium text-slate-300 outline-none focus:border-cyan-500"
+                >
+                  <option value="all">All</option>
+                  {departmentList.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid grid-cols-[auto_1fr] items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/30 px-3 py-2">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Priority</span>
+                <select
+                  value={priorityFilter}
+                  onChange={(e) => setPriorityFilter(e.target.value)}
+                  className="w-full rounded-lg border border-slate-700/50 bg-slate-800/60 px-2 py-1 text-xs font-medium text-slate-300 outline-none focus:border-cyan-500"
+                >
+                  <option value="all">All</option>
+                  <option value="critical">Critical</option>
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </label>
+              <div className="relative">
+                <svg className="absolute left-3 top-2.5 h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search complaints..."
+                  className="input-field pl-9"
+                  style={{ width: '100%' }}
+                />
+              </div>
             </div>
           </div>
 
@@ -326,6 +404,19 @@ export default function Dashboard() {
                           <Icon paths={cat.icon} className="h-3 w-3" /> {cat.label}
                         </span>
                           <span className={`badge ${sev.color}`}>Severity: {sev.label}</span>
+                          {(c.priority && c.priority !== 'medium') || c.priority === 'critical' ? (
+                            <span className={`badge ${(priorityMeta[c.priority] || priorityMeta.medium).color}`}>
+                              {(priorityMeta[c.priority] || priorityMeta.medium).label} priority
+                            </span>
+                          ) : null}
+                          {c.departmentName && c.departmentName !== 'Unassigned' && (
+                            <span className="badge bg-cyan-500/15 text-cyan-300">
+                              <Icon
+                                paths={['M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4']}
+                                className="h-3 w-3"
+                              /> {c.departmentName}
+                            </span>
+                          )}
                           <span className={`badge ${statusColor[c.status] || statusColor.Pending}`}>
                             <span className={`mr-1 h-1.5 w-1.5 rounded-full ${
                               c.status === 'Resolved' ? 'bg-emerald-400' :
@@ -349,13 +440,19 @@ export default function Dashboard() {
                               <Icon paths={['M5 13l4 4L19 7']} className="h-3 w-3" /> {timeAgo(c.resolvedAt)}
                             </span>
                           )}
-                          <span className="badge bg-slate-700/50 text-slate-300">
+                          <span className="badge bg-slate-700/50 text-slate-300" title="Support score from linked/merged reports">
                             <Icon
                               paths={['M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z']}
                               className="h-3 w-3"
                             />
                             Support {c.supportScore || 1}
                           </span>
+                          {c.mergedUsers && c.mergedUsers.length > 1 && (
+                            <span className="badge bg-amber-500/15 text-amber-300" title="Multiple citizens reported/linked this issue">
+                              <Icon paths={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']} className="h-3 w-3" />
+                              Merged x{c.mergedUsers.length}
+                            </span>
+                          )}
                           <span className="badge bg-slate-700/50 text-slate-300">
                             <Icon
                               paths={['M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z', 'M15 11a3 3 0 11-6 0 3 3 0 016 0z']}
@@ -368,6 +465,44 @@ export default function Dashboard() {
                               : ''}
                           </span>
                         </div>
+                        {(c.aiTimeline && c.aiTimeline.length > 0) || c.priorityReason ? (
+                          <button
+                            onClick={() => setExpandedId(expandedId === c._id ? null : c._id)}
+                            className="mt-3 grid grid-flow-col auto-cols-max items-center gap-1.5 rounded-lg border border-slate-700/50 bg-slate-800/30 px-3 py-1.5 text-[11px] font-semibold text-cyan-300 transition-colors hover:bg-slate-800/60"
+                          >
+                            <svg className={`h-3.5 w-3.5 transition-transform ${expandedId === c._id ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                            </svg>
+                            AI Action Timeline
+                          </button>
+                        ) : null}
+                        {expandedId === c._id && (c.aiTimeline?.length > 0 || c.priorityReason) && (
+                          <div className="mt-3 rounded-xl border border-cyan-500/15 bg-slate-950/40 p-4">
+                            {c.priorityReason && (
+                              <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
+                                <span className="font-semibold text-slate-200">Priority:</span>{' '}
+                                <span className={`badge mr-1 ${(priorityMeta[c.priority] || priorityMeta.medium).color}`}>
+                                  {(priorityMeta[c.priority] || priorityMeta.medium).label}
+                                </span>{' '}
+                                {c.priorityReason}
+                              </p>
+                            )}
+                            <ol className="space-y-2">
+                              {(c.aiTimeline || []).map((ev, i) => (
+                                <li key={i} className="grid grid-cols-[auto_1fr] items-start gap-3">
+                                  <span className="mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full bg-cyan-500/15 text-[10px] font-bold text-cyan-300">
+                                    {i + 1}
+                                  </span>
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold text-slate-200">{ev.step}</p>
+                                    {ev.detail && <p className="mt-0.5 text-[11px] leading-relaxed text-slate-500">{ev.detail}</p>}
+                                    {ev.ts && <p className="mt-0.5 text-[10px] text-slate-600">{new Date(ev.ts).toLocaleString()}</p>}
+                                  </div>
+                                </li>
+                              ))}
+                            </ol>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

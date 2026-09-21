@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const {
   COMPLAINT_CATEGORIES,
   SEVERITY_LEVELS,
+  PRIORITY_LEVELS,
   COMPLAINT_STATUSES,
 } = require('../config/constants');
 
@@ -20,13 +21,28 @@ const complaintSchema = new mongoose.Schema(
       },
     ],
     location: {
-      type: { type: String, enum: ['Point'], required: true, default: 'Point' },
-      coordinates: { type: [Number], required: true },
+      type: { type: String, enum: ['Point'], default: 'Point' },
+      coordinates: [Number],
+    },
+    locationSource: {
+      type: String,
+      enum: ['exif', 'device', 'pinned', 'geocode', 'not-provided'],
+      default: 'not-provided',
     },
     address: { type: String, trim: true },
     status: { type: String, enum: COMPLAINT_STATUSES, default: 'Pending', index: true },
     resolvedAt: { type: Date },
     department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department' },
+    departmentName: { type: String, default: 'Unassigned' },
+    priority: { type: String, enum: PRIORITY_LEVELS, default: 'medium', index: true },
+    priorityReason: { type: String, default: '' },
+    aiTimeline: [
+      {
+        step: { type: String, required: true },
+        detail: { type: String, default: '' },
+        ts: { type: Date, default: Date.now },
+      },
+    ],
     reportedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     mergedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     supportScore: { type: Number, default: 1, min: 1 },

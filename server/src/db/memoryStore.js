@@ -35,6 +35,10 @@ function createUser(data) {
 const publicUser = ({ password, ...rest }) => rest;
 
 function createComplaint(data) {
+  const hasLocation =
+    data.location &&
+    Array.isArray(data.location.coordinates) &&
+    data.location.coordinates.length === 2;
   const complaint = {
     _id: nextComplaintId(),
     title: data.title,
@@ -43,11 +47,13 @@ function createComplaint(data) {
     severity: data.severity,
     confidenceScore: data.confidenceScore,
     images: data.images || [],
-    location: {
-      type: 'Point',
-      coordinates: [data.longitude, data.latitude],
-    },
+    location: hasLocation ? data.location : null,
+    locationSource: data.locationSource || 'not-provided',
     department: data.department || null,
+    departmentName: data.departmentName || 'Unassigned',
+    priority: data.priority || 'medium',
+    priorityReason: data.priorityReason || '',
+    aiTimeline: Array.isArray(data.aiTimeline) ? data.aiTimeline : [],
     reportedBy: data.reportedBy,
     status: 'Pending',
     mergedUsers: [],
@@ -70,6 +76,7 @@ function findComplaintById(id) {
 function findNearbyDuplicate({ category, longitude, latitude, reporterId, maxDistance }) {
   return complaints.find(
     (c) =>
+      c.location &&
       c.reportedBy !== reporterId &&
       c.category === category &&
       c.status !== 'Resolved' &&
@@ -80,6 +87,22 @@ function findNearbyDuplicate({ category, longitude, latitude, reporterId, maxDis
         c.location.coordinates[0]
       ) <= maxDistance
   );
+}
+
+function countNearbyReports({ category, longitude, latitude, reporterId, radius }) {
+  return complaints.filter(
+    (c) =>
+      c.location &&
+      c.category === category &&
+      c.status !== 'Resolved' &&
+      (!reporterId || c.reportedBy !== reporterId) &&
+      haversineDistance(
+        latitude,
+        longitude,
+        c.location.coordinates[1],
+        c.location.coordinates[0]
+      ) <= radius
+  ).length;
 }
 
 function addSupport(complaint, userId) {
@@ -97,6 +120,49 @@ function updateComplaintStatus(complaint, status) {
   return complaint;
 }
 
+function pushTimeline(complaint, event) {
+  complaint.aiTimeline = complaint.aiTimeline || [];
+  complaint.aiTimeline.push({ ...event, ts: event.ts || new Date().toISOString() });
+  complaint.updatedAt = new Date().toISOString();
+  return complaint;
+}
+
+function setPriority(complaint, { priority, priorityReason }) {
+  complaint.priority = priority;
+  complaint.priorityReason = priorityReason || complaint.priorityReason;
+  complaint.updatedAt = new Date().toISOString();
+  return complaint;
+}
+
+function stats() {
+  const statuses = [
+    'Pending',
+    'Acknowledged',
+    'In Progress',
+    'Resolved',
+    'Any',
+  ];
+  const count = (fn) => complaints.filter(fn).length;
+  return {
+    total: complaints.length,
+    byStatus: statuses.reduce(
+      (acc, s) => ({ ...acc, [s]: count((c) => c.status === s) }),
+      {}
+    ),
+    byCategory: countBy('category'),
+    byDepartment: countBy('departmentName'),
+    bySeverity: countBy('severity'),
+    byPriority: countBy('priority'),
+  };
+  function countBy(key) {
+    return complaints.reduce((acc, c) => {
+      const val = c[key] || 'None';
+      acc[val] = (acc[val] || 0) + 1;
+      return acc;
+    }, {});
+  }
+}
+
 module.exports = {
   findUserByEmail,
   createUser,
@@ -105,6 +171,10 @@ module.exports = {
   listComplaints,
   findComplaintById,
   findNearbyDuplicate,
+  countNearbyReports,
   addSupport,
+  pushTimeline,
+  setPriority,
   updateComplaintStatus,
+  stats,
 };
