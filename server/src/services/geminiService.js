@@ -4,6 +4,11 @@ const logger = require('../utils/logger');
 const AI_MODEL = 'gemini-flash-latest';
 const AI_API_VERSION = 'v1beta';
 const AI_URL = `https://generativelanguage.googleapis.com/${AI_API_VERSION}/models/${AI_MODEL}:generateContent`;
+// Without this a stalled upstream connection holds the whole request open for
+// as long as undici's default headers timeout allows.
+const REQUEST_TIMEOUT_MS = 30000;
+
+const isRetryableStatus = (status) => status === 429 || status >= 500;
 
 function buildParts({ systemPrompt, history = [], userText, imageBase64, mimeType }) {
   const parts = [];
@@ -25,6 +30,45 @@ function buildParts({ systemPrompt, history = [], userText, imageBase64, mimeTyp
   }
   if (parts.length === 0) parts.push({ text: 'Hello.' });
   return parts;
+}
+
+async function requestOnce(body) {
+  const response = await fetch(AI_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-goog-api-key': geminiApiKey,
+    },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+  });
+
+  if (response.ok) return response.json();
+
+  // The provider's own error body can be large and can echo the request, so it
+  // is logged rather than folded into the message that reaches the client.
+  const detail = await response.text().catch(() => '');
+  const err = new Error(`Gemini API ${response.status}`);
+  err.status = response.status;
+  err.retryable = isRetryableStatus(response.status);
+  err.detail = detail;
+  throw err;
+}
+
+function extractText(data) {
+  const candidate = data?.candidates?.[0];
+  const blockReason = data?.promptFeedback?.blockReason || candidate?.finishReason;
+  if (blockReason && blockReason !== 'STOP') {
+    throw new Error(`Gemini returned no usable text (${blockReason}).`);
+  }
+  // A response is not confined to parts[0]: multi-part and multimodal replies
+  // split their text across several parts, so reading only the first one
+  // silently truncates the answer.
+  const parts = candidate?.content?.parts || [];
+  return parts
+    .map((p) => (typeof p?.text === 'string' ? p.text : ''))
+    .join('')
+    .trim();
 }
 
 async function generate(options = {}) {
@@ -55,44 +99,17 @@ async function generate(options = {}) {
   let lastError = null;
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
-      const response = await fetch(AI_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': geminiApiKey,
-        },
-        body: JSON.stringify(body),
-      });
-
-      if (response.status === 429 || response.status >= 500) {
-        lastError = new Error(`Gemini API ${response.status}`);
-        if (attempt < retries) {
-          const delay = attempt * 2000;
-          logger.warn(`Gemini API ${response.status}, retrying in ${delay}ms (${attempt}/${retries})`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-      }
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => '');
-        throw new Error(`Gemini API ${response.status}: ${detail}`);
-      }
-
-      const data = await response.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-      return typeof text === 'string' ? text.trim() : '';
+      return extractText(await requestOnce(body));
     } catch (err) {
       lastError = err;
-      if (err.message.startsWith('Gemini API 429') || err.message.startsWith('Gemini API 5')) {
-        if (attempt < retries) {
-          const delay = attempt * 2000;
-          logger.warn(`${err.message}, retrying in ${delay}ms (${attempt}/${retries})`);
-          await new Promise((resolve) => setTimeout(resolve, delay));
-          continue;
-        }
-      }
-      throw err;
+      // Timeouts and socket resets are worth another go just like 429/5xx.
+      const retryable = err.retryable || err.name === 'AbortError' || err.name === 'TypeError';
+      if (!retryable || attempt === retries) throw err;
+      const delay = attempt * 2000;
+      logger.warn(
+        `${err.message}${err.detail ? ` — ${err.detail.slice(0, 300)}` : ''}, retrying in ${delay}ms (${attempt}/${retries})`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 

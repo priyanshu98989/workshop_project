@@ -112,14 +112,20 @@ exports.addSupport = async (complaintId, userId) => {
     if (!complaint) return null;
     return memoryStore.addSupport(complaint, userId);
   }
-  const complaint = await Complaint.findById(complaintId);
-  if (!complaint) return null;
-  if (!complaint.mergedUsers.includes(userId)) {
-    complaint.supportScore += 1;
-    complaint.mergedUsers.push(userId);
-    await complaint.save();
-  }
-  return toPlain(complaint);
+  // A findById -> includes -> increment -> save round trip loses updates when
+  // two reports of the same user land concurrently: both read a mergedUsers
+  // that lacks the id and both increment. Matching on $ne inside the same
+  // update makes the increment conditional and the write a single atomic
+  // operation, and it no longer needs mergedUsers to pre-exist.
+  const updated = await Complaint.findOneAndUpdate(
+    { _id: complaintId, mergedUsers: { $ne: userId } },
+    { $inc: { supportScore: 1 }, $addToSet: { mergedUsers: userId } },
+    { new: true }
+  ).lean();
+  if (updated) return toPlain(updated);
+  // Either the complaint is gone or this user already supported it; both cases
+  // just need the current document.
+  return Complaint.findById(complaintId).lean();
 };
 
 exports.pushTimeline = async (complaintId, event) => {
@@ -174,8 +180,11 @@ exports.stats = async () => {
     Complaint.aggregate([{ $group: { _id: '$priority', count: { $sum: 1 } } }]),
   ]);
 
-  const toObject = (rows) =>
-    rows.reduce((acc, row) => ({ ...acc, [row._id || 'None']: row.count }), {});
+  const toObject = (rows) => {
+    const acc = {};
+    for (const row of rows) acc[row._id || 'None'] = row.count;
+    return acc;
+  };
   const total = await Complaint.countDocuments();
 
   return {
@@ -186,17 +195,4 @@ exports.stats = async () => {
     bySeverity: toObject(bySeverity),
     byPriority: toObject(byPriority),
   };
-};
-
-module.exports = {
-  create: exports.create,
-  list: exports.list,
-  findById: exports.findById,
-  findNearbyDuplicate: exports.findNearbyDuplicate,
-  countNearbyReports: exports.countNearbyReports,
-  addSupport: exports.addSupport,
-  pushTimeline: exports.pushTimeline,
-  setPriority: exports.setPriority,
-  updateStatus: exports.updateStatus,
-  stats: exports.stats,
 };

@@ -106,6 +106,7 @@ function countNearbyReports({ category, longitude, latitude, reporterId, radius 
 }
 
 function addSupport(complaint, userId) {
+  if (!Array.isArray(complaint.mergedUsers)) complaint.mergedUsers = [];
   if (!complaint.mergedUsers.includes(userId)) {
     complaint.supportScore += 1;
     complaint.mergedUsers.push(userId);
@@ -116,7 +117,12 @@ function addSupport(complaint, userId) {
 function updateComplaintStatus(complaint, status) {
   complaint.status = status;
   complaint.updatedAt = new Date().toISOString();
+  // Reopening must clear the timestamp, otherwise it reports a resolution time
+  // for a complaint that is open again. complaintRepository.updateStatus does
+  // the same, and the two backends have to agree because the server falls back
+  // to memory mode whenever Mongo is unreachable.
   if (status === 'Resolved') complaint.resolvedAt = new Date().toISOString();
+  else complaint.resolvedAt = null;
   return complaint;
 }
 
