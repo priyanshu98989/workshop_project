@@ -5,7 +5,8 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth, ensureGuestAuth } from '../lib/auth';
-import { loadLeaflet, addTileLayer, DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/leaflet';
+import { loadLeaflet, addTileLayer, hasCoordinates, DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/leaflet';
+import { priorityMeta, DEFAULT_PRIORITY } from '../lib/complaintMeta';
 import ThemeToggle from '../components/ThemeToggle';
 import Icon from '../components/Icon';
 
@@ -45,6 +46,10 @@ export default function ReportIssue() {
   const timersRef = useRef([]);
   const gpsRetriesRef = useRef(0);
   const streamRef = useRef(null);
+  const cameraTokenRef = useRef(0);
+  const uploadTokenRef = useRef(0);
+  const placeAbortRef = useRef(null);
+  const placeDebounceRef = useRef(null);
   const [photoSource, setPhotoSource] = useState(null);
   const [locationFromExif, setLocationFromExif] = useState(false);
   const [manualLocation, setManualLocation] = useState(null);
@@ -70,6 +75,10 @@ export default function ReportIssue() {
   };
 
   const stopCamera = () => {
+    // Bump the token so a getUserMedia still in flight is invalidated. Its
+    // promise can resolve after unmount (or after a camera switch) and would
+    // otherwise store a stream nobody can stop, leaving the camera recording.
+    cameraTokenRef.current += 1;
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
   };
@@ -80,7 +89,9 @@ export default function ReportIssue() {
     videoRef.current = node;
     if (!node || !streamRef.current) return;
     node.srcObject = streamRef.current;
-    node.onloadedmetadata = () => setCameraState('ready');
+    node.onloadedmetadata = () => {
+      if (streamRef.current) setCameraState('ready');
+    };
   }, []);
 
   const stopWatching = () => {
@@ -176,6 +187,10 @@ export default function ReportIssue() {
     return () => {
       stopWatching();
       stopCamera();
+      // Invalidate the in-flight EXIF read and any queued place search.
+      uploadTokenRef.current += 1;
+      clearTimeout(placeDebounceRef.current);
+      placeAbortRef.current?.abort();
     };
   }, []);
 
@@ -186,9 +201,15 @@ export default function ReportIssue() {
     }
     setCameraState('starting');
     stopCamera();
+    const token = cameraTokenRef.current;
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode } })
       .then((stream) => {
+        if (token !== cameraTokenRef.current) {
+          // Superseded by a later request or by unmount — release its tracks.
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         streamRef.current = stream;
         const video = videoRef.current;
         if (!video) {
@@ -197,9 +218,12 @@ export default function ReportIssue() {
           return;
         }
         video.srcObject = stream;
-        video.onloadedmetadata = () => setCameraState('ready');
+        video.onloadedmetadata = () => {
+          if (token === cameraTokenRef.current) setCameraState('ready');
+        };
       })
       .catch((err) => {
+        if (token !== cameraTokenRef.current) return;
         console.error('Camera error:', err);
         setCameraState('error');
       });
@@ -253,23 +277,40 @@ export default function ReportIssue() {
   };
 
   const searchPlace = async (q) => {
-    if (!q || q.trim().length < 2) {
+    const query = (q || '').trim();
+    // Cancel whatever is in flight before starting a new one, so a slow earlier
+    // response cannot land after a newer one and overwrite fresher results.
+    placeAbortRef.current?.abort();
+    if (query.length < 2) {
       setPlaceResults([]);
+      setPlaceLoading(false);
       return;
     }
+    const controller = new AbortController();
+    placeAbortRef.current = controller;
     setPlaceLoading(true);
     try {
       const res = await axios.get(`${API_URL}/api/geolocate/place`, {
-        params: { query: q.trim() },
+        params: { query },
         headers: authHeaders(),
+        signal: controller.signal,
       });
+      if (controller.signal.aborted) return;
       setPlaceResults(res.data?.data || []);
     } catch (err) {
+      if (controller.signal.aborted || err.code === 'ERR_CANCELED') return;
       console.error('Place search error:', err);
       setPlaceResults([]);
     } finally {
-      setPlaceLoading(false);
+      if (!controller.signal.aborted) setPlaceLoading(false);
     }
+  };
+
+  const onPlaceQueryChange = (value) => {
+    setPlaceQuery(value);
+    // Debounce: without this every keystroke fires an authenticated request.
+    clearTimeout(placeDebounceRef.current);
+    placeDebounceRef.current = setTimeout(() => searchPlace(value), 300);
   };
 
   const pickPlace = (result) => {
@@ -389,8 +430,13 @@ export default function ReportIssue() {
     if (!file) return;
     // Allow re-picking the same file after a failed/retaken attempt.
     input.value = '';
+    // Two picks in quick succession would otherwise let the first file's slow
+    // EXIF read land after the second and overwrite its image and location.
+    const token = (uploadTokenRef.current += 1);
     const reader = new FileReader();
-    reader.onload = () => setImage(reader.result);
+    reader.onload = () => {
+      if (token === uploadTokenRef.current) setImage(reader.result);
+    };
     reader.readAsDataURL(file);
     setPhotoSource('gallery');
     setManualLocation(null);
@@ -437,6 +483,8 @@ export default function ReportIssue() {
     } catch (err) {
       console.error('EXIF GPS read error:', err);
     }
+
+    if (token !== uploadTokenRef.current) return;
 
     if (gpsFromImage) {
       stopWatching();
@@ -792,10 +840,7 @@ export default function ReportIssue() {
                   <input
                     type="text"
                     value={placeQuery}
-                    onChange={(e) => {
-                      setPlaceQuery(e.target.value);
-                      searchPlace(e.target.value);
-                    }}
+                    onChange={(e) => onPlaceQueryChange(e.target.value)}
                     placeholder="Place ka naam dhundho..."
                     className="input-field flex-1"
                   />
@@ -969,8 +1014,8 @@ export default function ReportIssue() {
                           result.complaint.severity === 'medium' ? 'bg-amber-500/20 text-amber-300' :
                           'bg-emerald-500/20 text-emerald-300'
                         } capitalize`}>{result.complaint.severity}</span>
-                        <span className={`badge ${priorityColor(result.complaint.priority)}`}>
-                          {result.complaint.priority || 'medium'} priority
+                        <span className={`badge ${priorityMeta[result.complaint.priority]?.color || priorityMeta[DEFAULT_PRIORITY].color}`}>
+                          {result.complaint.priority || DEFAULT_PRIORITY} priority
                         </span>
                         {result.complaint.departmentName && (
                           <span className="badge bg-cyan-500/15 text-cyan-300">
@@ -1031,7 +1076,7 @@ export default function ReportIssue() {
                           </span>
                         )}
                       </div>
-                      {result.existingComplaint.location?.coordinates && (
+                      {hasCoordinates(result.existingComplaint.location) && (
                         <p className="font-mono text-[10px] text-slate-500">
                           {result.existingComplaint.location.coordinates[1].toFixed(5)},{' '}
                           {result.existingComplaint.location.coordinates[0].toFixed(5)}
@@ -1176,20 +1221,6 @@ function Step({ active, done, label }) {
       <span className={`text-xs font-medium ${active || done ? 'text-white' : 'text-slate-600'}`}>{label}</span>
     </div>
   );
-}
-
-function priorityColor(priority) {
-  switch (priority) {
-    case 'critical':
-      return 'bg-purple-500/20 text-purple-300';
-    case 'high':
-      return 'bg-red-500/20 text-red-300';
-    case 'low':
-      return 'bg-emerald-500/20 text-emerald-300';
-    case 'medium':
-    default:
-      return 'bg-amber-500/20 text-amber-300';
-  }
 }
 
 function Timeline({ events = [], className = '' }) {

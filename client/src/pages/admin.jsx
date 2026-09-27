@@ -4,7 +4,7 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, clearAuth } from '../lib/auth';
-import { loadLeaflet, addTileLayer, fitToMarkers, escapeHtml, DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/leaflet';
+import { loadLeaflet, addTileLayer, fitToMarkers, escapeHtml, hasCoordinates, DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/leaflet';
 import {
   categoryMeta,
   priorityMeta,
@@ -55,8 +55,12 @@ export default function AdminDashboard() {
   const [priorityFilter, setPriorityFilter] = useState('all');
   const [viewingImage, setViewingImage] = useState(null);
   const user = getUser();
+  const fetchTokenRef = useRef(0);
 
   const fetchAll = async () => {
+    // Rapid Refresh clicks fire overlapping requests; without a token the slower
+    // earlier one can resolve last and overwrite the fresher data.
+    const token = (fetchTokenRef.current += 1);
     setLoading(true);
     setError(null);
     try {
@@ -64,17 +68,22 @@ export default function AdminDashboard() {
         axios.get(`${API_URL}/api/complaints`, { headers: authHeaders() }),
         axios.get(`${API_URL}/api/complaints/stats`, { headers: authHeaders() }),
       ]);
+      if (token !== fetchTokenRef.current) return;
       setComplaints(complaintsRes.data.data || []);
       setStats(statsRes.data.data || null);
     } catch (err) {
+      if (token !== fetchTokenRef.current) return;
       setError(err.response?.data?.error || err.message);
     } finally {
-      setLoading(false);
+      if (token === fetchTokenRef.current) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchAll();
+    return () => {
+      fetchTokenRef.current += 1;
+    };
   }, []);
 
   const departments = useMemo(
@@ -103,7 +112,7 @@ export default function AdminDashboard() {
   const points = useMemo(
     () =>
       filtered
-        .filter((c) => c.location?.coordinates?.length === 2)
+        .filter((c) => hasCoordinates(c.location))
         .map((c) => ({
           id: c._id,
           lat: c.location.coordinates[1],
@@ -308,7 +317,7 @@ export default function AdminDashboard() {
                           <span className="badge bg-slate-700/50 text-slate-300">
                             Support {c.supportScore || 1}
                           </span>
-                          {c.location?.coordinates && (
+                          {hasCoordinates(c.location) && (
                             <span className="badge bg-slate-700/50 text-slate-300">
                               {[c.location.coordinates[1], c.location.coordinates[0]].map((n) => n.toFixed(4)).join(', ')}
                             </span>

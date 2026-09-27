@@ -4,7 +4,8 @@ import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth } from '../lib/auth';
-import { categoryMeta, severityMeta, priorityMeta, statusColor, DEFAULT_CATEGORY } from '../lib/complaintMeta';
+import { categoryMeta, severityMeta, priorityMeta, statusColor, DEFAULT_CATEGORY, DEFAULT_PRIORITY, DEFAULT_STATUS_COLOR } from '../lib/complaintMeta';
+import { hasCoordinates } from '../lib/leaflet';
 import ThemeToggle from '../components/ThemeToggle';
 import Icon from '../components/Icon';
 
@@ -348,8 +349,8 @@ export default function Dashboard() {
                         </span>
                           <span className={`badge ${sev.color}`}>Severity: {sev.label}</span>
                           {(c.priority && c.priority !== 'medium') || c.priority === 'critical' ? (
-                            <span className={`badge ${(priorityMeta[c.priority] || priorityMeta.medium).color}`}>
-                              {(priorityMeta[c.priority] || priorityMeta.medium).label} priority
+      <span className={`badge ${(priorityMeta[c.priority] || priorityMeta[DEFAULT_PRIORITY]).color}`}>
+      {(priorityMeta[c.priority] || priorityMeta[DEFAULT_PRIORITY]).label} priority
                             </span>
                           ) : null}
                           {c.departmentName && c.departmentName !== 'Unassigned' && (
@@ -360,7 +361,7 @@ export default function Dashboard() {
                               /> {c.departmentName}
                             </span>
                           )}
-                          <span className={`badge ${statusColor[c.status] || statusColor.Pending}`}>
+                          <span className={`badge ${statusColor[c.status] || DEFAULT_STATUS_COLOR}`}>
                             <span className={`mr-1 h-1.5 w-1.5 rounded-full ${
                               c.status === 'Resolved' ? 'bg-emerald-400' :
                               c.status === 'In Progress' ? 'bg-amber-400' :
@@ -401,7 +402,7 @@ export default function Dashboard() {
                               paths={['M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z', 'M15 11a3 3 0 11-6 0 3 3 0 016 0z']}
                               className="h-3 w-3"
                             />
-                            {c.location?.coordinates
+                            {hasCoordinates(c.location)
                               ? [c.location.coordinates[1], c.location.coordinates[0]]
                                   .map((n) => n.toFixed(4))
                                   .join(', ')
@@ -424,8 +425,8 @@ export default function Dashboard() {
                             {c.priorityReason && (
                               <p className="mb-3 text-[11px] leading-relaxed text-slate-400">
                                 <span className="font-semibold text-slate-200">Priority:</span>{' '}
-                                <span className={`badge mr-1 ${(priorityMeta[c.priority] || priorityMeta.medium).color}`}>
-                                  {(priorityMeta[c.priority] || priorityMeta.medium).label}
+      <span className={`badge mr-1 ${(priorityMeta[c.priority] || priorityMeta[DEFAULT_PRIORITY]).color}`}>
+      {(priorityMeta[c.priority] || priorityMeta[DEFAULT_PRIORITY]).label}
                                 </span>{' '}
                                 {c.priorityReason}
                               </p>

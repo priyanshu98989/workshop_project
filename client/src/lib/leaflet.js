@@ -97,3 +97,20 @@ export function escapeHtml(value) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+/**
+ * A complaint submitted without a location still gets Mongoose's schema
+ * defaults, so `location.coordinates` comes back as `[]`. An empty array is
+ * truthy, so a plain `location?.coordinates` check passes and the following
+ * `coordinates[1].toFixed()` throws — white-screening the page. Callers must
+ * require finite numbers before touching the pair.
+ */
+export function hasCoordinates(location) {
+  const coords = location?.coordinates;
+  return (
+    Array.isArray(coords) &&
+    coords.length === 2 &&
+    Number.isFinite(coords[0]) &&
+    Number.isFinite(coords[1])
+  );
+}
