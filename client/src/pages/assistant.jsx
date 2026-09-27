@@ -14,6 +14,24 @@ const SUGGESTIONS = [
   'Sabse tez gadi kaun si hai?',
 ];
 
+const GREETING =
+  'Namaste! Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?';
+
+const SEND_ICON = ['M12 19l9 2-9-18-9 18 9-2zm0 0v-8'];
+const FORWARD_ICON = ['M17 8l4 4m0 0l-4 4m4-4H3'];
+
+// Result URLs come from server-side HTML scraping, so they are untrusted input.
+// rel="noopener" blocks tabnabbing but not a `javascript:` href, so the
+// protocol is checked before the link is ever rendered.
+const safeUrl = (value) => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : null;
+  } catch {
+    return null;
+  }
+};
+
 export default function Assistant() {
   const router = useRouter();
   const [messages, setMessages] = useState([]);
@@ -29,28 +47,31 @@ export default function Assistant() {
   const user = getUser();
 
   useEffect(() => {
+    const greet = () => setMessages([{ role: 'assistant', content: GREETING }]);
     if (!isLoggedIn()) {
-      ensureGuestAuth().then(() => {
-        setMessages([
-          {
-            role: 'assistant',
-            content:
-              'Namaste! Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?',
-          },
-        ]);
-      });
+      ensureGuestAuth().then(greet);
     } else {
-      setMessages([
-        {
-          role: 'assistant',
-          content:
-            'Namaste! Main aapka CivicEye Assistant hoon. Main image samajh sakta hoon, aapke complaints ke bare mein bata sakta hoon, aur general sawalon ka live web search kar sakta hoon. Aap kaise madad karun?',
-        },
-      ]);
+      greet();
     }
-    const hasRec = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-    setRecognitionSupported(hasRec);
-  }, [router]);
+    setRecognitionSupported(!!(window.SpeechRecognition || window.webkitSpeechRecognition));
+
+    return () => {
+      // Leaving mid-reply would keep the mic hot and the voice talking over
+      // whatever page the user lands on next.
+      const rec = recognitionRef.current;
+      recognitionRef.current = null;
+      if (rec) {
+        rec.onend = null;
+        rec.onerror = null;
+        try {
+          rec.abort();
+        } catch {}
+      }
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -349,9 +370,7 @@ export default function Assistant() {
                   disabled={loading || (!input.trim() && !image)}
                   className="btn-primary grid h-12 grid-flow-col auto-cols-max items-center gap-2 px-5 disabled:opacity-50"
                 >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                  </svg>
+                  <Icon paths={SEND_ICON} className="h-4 w-4" strokeWidth={2} />
                   Send
                 </button>
               </div>
@@ -427,18 +446,19 @@ function MessageBubble({ msg }) {
               className="mt-3 grid w-full grid-flow-col auto-cols-max items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-4 py-2.5 text-xs font-bold text-white shadow-lg shadow-cyan-500/25 transition-all hover:brightness-110"
             >
               Report this issue — opens AI routing
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M17 8l4 4m0 0l-4 4m4-4H3" />
-              </svg>
+              <Icon paths={FORWARD_ICON} className="h-4 w-4" strokeWidth={2} />
             </Link>
           </div>
         )}
-        {msg.results && msg.results.length > 0 && (
+        {(() => {
+          const links = (msg.results || []).map((r) => ({ ...r, href: safeUrl(r.url) })).filter((r) => r.href);
+          if (links.length === 0) return null;
+          return (
           <div className="mt-2 space-y-1.5">
-            {msg.results.map((r, i) => (
+            {links.map((r, i) => (
               <a
                 key={i}
-                href={r.url}
+                href={r.href}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="grid grid-flow-col auto-cols-max items-center gap-2 rounded-xl border border-slate-700/50 bg-slate-800/30 px-3 py-2 text-xs font-medium text-cyan-300 transition-all hover:border-cyan-500/50 hover:bg-slate-800/60"
@@ -454,7 +474,8 @@ function MessageBubble({ msg }) {
               </a>
             ))}
           </div>
-        )}
+          );
+        })}
       </div>
     </div>
   );
