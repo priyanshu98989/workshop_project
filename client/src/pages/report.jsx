@@ -1,12 +1,37 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import axios from 'axios';
 import exifr from 'exifr';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, isLoggedIn, clearAuth, ensureGuestAuth } from '../lib/auth';
+import { loadLeaflet, addTileLayer, DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/leaflet';
 import ThemeToggle from '../components/ThemeToggle';
 import Icon from '../components/Icon';
+
+const GPS_MAX_ATTEMPTS = 3;
+const CHECK_CIRCLE_FILLED = {
+  paths: ['M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z'],
+  viewBox: '0 0 20 20',
+  fill: 'currentColor',
+  fillRule: 'evenodd',
+  clipRule: 'evenodd',
+};
+const DASHBOARD_PATH = 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z';
+const REFRESH_PATH = 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15';
+const MAP_PIN_ICON = [
+  'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z',
+  'M15 11a3 3 0 11-6 0 3 3 0 016 0z',
+];
+const WARNING_ICON = ['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z'];
+const CAMERA_BODY = 'M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 001.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z';
+const CAMERA_ICON = [CAMERA_BODY, 'M15 13a3 3 0 11-6 0 3 3 0 016 0z'];
+const CHECK_ICON = ['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'];
+const SWITCH_CAMERA_ICON = ['M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4'];
+const SEARCH_ICON = ['M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z'];
+const UPLOAD_ICON = ['M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12'];
+const SEND_ICON = ['M12 19l9 2-9-18-9 18 9-2zm0 0v-8'];
+const TICK_PATH = 'M5 13l4 4L19 7';
 
 export default function ReportIssue() {
   const router = useRouter();
@@ -19,6 +44,7 @@ export default function ReportIssue() {
   const watchIdRef = useRef(null);
   const timersRef = useRef([]);
   const gpsRetriesRef = useRef(0);
+  const streamRef = useRef(null);
   const [photoSource, setPhotoSource] = useState(null);
   const [locationFromExif, setLocationFromExif] = useState(false);
   const [manualLocation, setManualLocation] = useState(null);
@@ -42,6 +68,20 @@ export default function ReportIssue() {
     timersRef.current.forEach((t) => clearTimeout(t));
     timersRef.current = [];
   };
+
+  const stopCamera = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  };
+
+  // The camera stream outlives the <video> element — retaking swaps in a fresh
+  // node, so the callback ref re-attaches the live stream instead of re-prompting.
+  const attachVideo = useCallback((node) => {
+    videoRef.current = node;
+    if (!node || !streamRef.current) return;
+    node.srcObject = streamRef.current;
+    node.onloadedmetadata = () => setCameraState('ready');
+  }, []);
 
   const stopWatching = () => {
     if (watchIdRef.current != null && navigator.geolocation) {
@@ -79,8 +119,7 @@ export default function ReportIssue() {
       }
       // No fix yet and nothing better (image EXIF) supplied the location —
       // give the browser a couple of warm-up attempts before giving up.
-      if (allowRetry && gpsRetriesRef.current < 3 && locationSourceRef.current !== 'image') {
-        gpsRetriesRef.current += 1;
+      if (allowRetry && gpsRetriesRef.current < GPS_MAX_ATTEMPTS && locationSourceRef.current !== 'image') {
         const retryTimer = setTimeout(() => requestDeviceLocation(), 1200);
         timersRef.current.push(retryTimer);
         setLocationLoading(true);
@@ -134,7 +173,10 @@ export default function ReportIssue() {
 
     startCamera(facing);
 
-    return () => stopWatching();
+    return () => {
+      stopWatching();
+      stopCamera();
+    };
   }, []);
 
   const startCamera = (facingMode) => {
@@ -143,16 +185,19 @@ export default function ReportIssue() {
       return;
     }
     setCameraState('starting');
-    if (videoRef.current?.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach((t) => t.stop());
-    }
+    stopCamera();
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode } })
       .then((stream) => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = () => setCameraState('ready');
+        streamRef.current = stream;
+        const video = videoRef.current;
+        if (!video) {
+          // No <video> mounted (camera view is hidden) — keep the stream so the
+          // callback ref can attach it when the preview returns.
+          return;
         }
+        video.srcObject = stream;
+        video.onloadedmetadata = () => setCameraState('ready');
       })
       .catch((err) => {
         console.error('Camera error:', err);
@@ -169,12 +214,13 @@ export default function ReportIssue() {
   };
 
   const capturePhoto = () => {
-    if (!videoRef.current || cameraState !== 'ready') return;
+    const video = videoRef.current;
+    if (!video || cameraState !== 'ready' || !video.videoWidth) return;
     const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 640;
-    canvas.height = videoRef.current.videoHeight || 480;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoRef.current, 0, 0);
+    ctx.drawImage(video, 0, 0);
     setImage(canvas.toDataURL('image/jpeg'));
     setPhotoSource('capture');
     setManualLocation(null);
@@ -338,8 +384,11 @@ export default function ReportIssue() {
   };
 
   const handleImageUpload = async (e) => {
-    const file = e.target.files?.[0];
+    const input = e.target;
+    const file = input.files?.[0];
     if (!file) return;
+    // Allow re-picking the same file after a failed/retaken attempt.
+    input.value = '';
     const reader = new FileReader();
     reader.onload = () => setImage(reader.result);
     reader.readAsDataURL(file);
@@ -368,12 +417,13 @@ export default function ReportIssue() {
 
     try {
       // Timeout guard: some large/odd photos make exifr hang in the browser.
+      let timeoutId;
       const gps = await Promise.race([
         exifr.gps(file),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('EXIF GPS read timed out')), 5000)
-        ),
-      ]);
+        new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('EXIF GPS read timed out')), 5000);
+        }),
+      ]).finally(() => clearTimeout(timeoutId));
       if (gps && typeof gps.latitude === 'number' && typeof gps.longitude === 'number') {
         gpsFromImage = { lat: gps.latitude, lng: gps.longitude };
         try {
@@ -398,17 +448,13 @@ export default function ReportIssue() {
       setNeedsLocationChoice(false);
       setAllowNoLocation(false);
       setLocationLoading(false);
-    } else if (photoSource === 'gallery') {
-      // Photo picked from the gallery has no embedded GPS — the device's
-      // CURRENT location is NOT this photo's location. Ask the citizen to
-      // pin the right spot, use current, or submit without a location.
+    } else if (!deviceLocked) {
+      // No EXIF GPS in the photo. The device's CURRENT location is not this
+      // photo's location, so ask the citizen to pin the right spot, use current,
+      // or submit without a location. The background `requestDeviceLocation`
+      // picks up the device fix when it lands; keep a watch running meanwhile.
       setLocationFromExif(false);
       setNeedsLocationChoice(true);
-      if (!watchIdRef.current) requestDeviceLocation();
-      setLocationLoading(watchIdRef.current != null);
-    } else if (!location) {
-      // No GPS embedded in the photo. The background `requestDeviceLocation`
-      // picks up the device fix when it lands; make sure a watch is still running.
       if (!watchIdRef.current) requestDeviceLocation();
       setLocationLoading(watchIdRef.current != null);
     } else {
@@ -502,9 +548,7 @@ export default function ReportIssue() {
                 AI Assistant
               </Link>
               <Link href="/dashboard" className="grid grid-flow-col auto-cols-max items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-slate-300 transition-colors hover:bg-slate-800/50 hover:text-white">
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
+                <Icon paths={[DASHBOARD_PATH]} className="h-4 w-4" strokeWidth={2} />
                 Dashboard
               </Link>
               <button
@@ -535,7 +579,7 @@ export default function ReportIssue() {
             {!image ? (
               <div className="overflow-hidden rounded-2xl border border-slate-700/50 bg-black shadow-2xl">
                 <div className="relative aspect-[4/5] w-full">
-                  <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                  <video ref={attachVideo} autoPlay playsInline muted className="h-full w-full object-cover" />
 
                   {cameraState === 'ready' && (
                     <button
@@ -544,10 +588,7 @@ export default function ReportIssue() {
                       title={facing === 'environment' ? 'Switch to front camera' : 'Switch to back camera'}
                       aria-label="Switch camera"
                     >
-                      <Icon
-                        paths={['M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4']}
-                        className="h-5 w-5"
-                      />
+                      <Icon paths={SWITCH_CAMERA_ICON} className="h-5 w-5" strokeWidth={2} />
                     </button>
                   )}
 
@@ -569,10 +610,7 @@ export default function ReportIssue() {
                   {cameraState === 'error' && (
                     <div className="absolute inset-0 grid grid-cols-1 place-content-center place-items-center gap-3 bg-slate-950/90 p-6 text-center">
                       <div className="grid h-14 w-14 place-items-center rounded-2xl bg-slate-800/60">
-                        <Icon
-                          paths={['M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z', 'M15 13a3 3 0 11-6 0 3 3 0 016 0z']}
-                          className="h-7 w-7 text-cyan-400"
-                        />
+                        <Icon paths={CAMERA_ICON} className="h-7 w-7 text-cyan-400" />
                       </div>
                       <p className="text-sm text-slate-400">Camera unavailable. Upload a photo instead.</p>
                       <label className="btn-primary cursor-pointer text-sm">
@@ -601,15 +639,9 @@ export default function ReportIssue() {
                     <div className={`absolute inset-0 grid place-items-center bg-slate-950/60 backdrop-blur-sm`}>
                       <div className="text-center">
                         {result.isDuplicate ? (
-                          <Icon
-                            paths={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']}
-                            className="mx-auto h-16 w-16 text-amber-400"
-                          />
+                          <Icon paths={WARNING_ICON} className="mx-auto h-16 w-16 text-amber-400" />
                         ) : (
-                          <Icon
-                            paths={['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z']}
-                            className="mx-auto h-16 w-16 text-emerald-400"
-                          />
+                          <Icon paths={CHECK_ICON} className="mx-auto h-16 w-16 text-emerald-400" />
                         )}
                         <p className="mt-3 text-sm font-semibold text-white">
                           {result.isDuplicate ? 'Duplicate Detected' : 'Complaint Registered'}
@@ -625,9 +657,7 @@ export default function ReportIssue() {
                       onClick={retakePhoto}
                       className="grid grid-flow-col auto-cols-max items-center gap-1.5 rounded-lg border border-slate-700 px-3 py-1.5 text-xs font-medium text-slate-300 transition-colors hover:border-slate-600 hover:text-white"
                     >
-                      <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
+                      <Icon paths={[REFRESH_PATH]} className="h-3 w-3" strokeWidth={2} />
                       Retake
                     </button>
                   </div>
@@ -640,9 +670,7 @@ export default function ReportIssue() {
           {!image && cameraState === 'ready' && (
             <div className="mt-4 grid grid-flow-col auto-cols-max items-center justify-center">
               <label className="cursor-pointer text-xs font-medium text-cyan-400 transition-colors hover:text-cyan-300">
-                <svg className="mr-1 inline h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
+                <Icon paths={UPLOAD_ICON} className="mr-1 inline h-4 w-4" strokeWidth={2} />
                 <input type="file" accept="image/*" className="hidden" onChange={handleImageUpload} />
                 Upload a photo instead
               </label>
@@ -654,14 +682,8 @@ export default function ReportIssue() {
             <div className={`flex items-center gap-2 rounded-xl border p-3 text-sm ${location || manualLocation || allowNoLocation ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
               {locationLoading ? (
                 <div className="h-4 w-4 animate-spin-slow rounded-full border-2 border-slate-500 border-t-transparent" />
-              ) : location || manualLocation ? (
-                <svg className="h-4 w-4 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
-              ) : allowNoLocation ? (
-                <svg className="h-4 w-4 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
+              ) : location || manualLocation || allowNoLocation ? (
+                <Icon {...CHECK_CIRCLE_FILLED} className="h-4 w-4 shrink-0 text-emerald-400" />
               ) : (
                 <div className="h-4 w-4 rounded-full border-2 border-slate-600" />
               )}
@@ -691,9 +713,7 @@ export default function ReportIssue() {
                     onClick={retryLocation}
                     className="mt-1 grid grid-flow-col auto-cols-max items-center gap-1 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] font-semibold text-cyan-400 transition-colors hover:bg-cyan-500/20"
                   >
-                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                    </svg>
+                    <Icon paths={[REFRESH_PATH]} className="h-3 w-3" strokeWidth={2} />
                     Retry for GPS
                   </button>
                 )}
@@ -701,13 +721,9 @@ export default function ReportIssue() {
             </div>
             <div className={`grid grid-flow-col auto-cols-max items-center gap-2 rounded-xl border p-3 text-sm ${image ? 'border-emerald-500/30 bg-emerald-500/10' : 'border-slate-700/50 bg-slate-800/30 text-slate-400'}`}>
               {image ? (
-                <svg className="h-4 w-4 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
+                <Icon {...CHECK_CIRCLE_FILLED} className="h-4 w-4 text-emerald-400" />
               ) : (
-                <svg className="h-4 w-4 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                </svg>
+                <Icon paths={[CAMERA_BODY]} className="h-4 w-4 text-slate-500" strokeWidth={2} />
               )}
               <span className="font-medium">{image ? 'Photo Ready' : 'No Photo'}</span>
             </div>
@@ -738,10 +754,7 @@ export default function ReportIssue() {
                   rel="noopener noreferrer"
                   className="grid grid-flow-col auto-cols-max items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3 py-2 text-xs font-semibold text-cyan-300 transition-colors hover:bg-cyan-500/20"
                 >
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                  </svg>
+                  <Icon paths={MAP_PIN_ICON} className="h-4 w-4" strokeWidth={2} />
                   View on Google Maps
                 </a>
               </div>
@@ -760,9 +773,7 @@ export default function ReportIssue() {
           {photoSource === 'gallery' && !locationFromExif && needsLocationChoice && !manualLocation && (
             <div className="mt-4 animate-slide-up rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
               <div className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
+                <Icon paths={WARNING_ICON} className="mt-0.5 h-5 w-5 shrink-0 text-amber-400" strokeWidth={2} />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-amber-300">
                     Photo me GPS data nahi hai
@@ -800,9 +811,7 @@ export default function ReportIssue() {
                       </span>
                     ) : (
                       <>
-                        <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
+                        <Icon paths={SEARCH_ICON} className="h-3.5 w-3.5" strokeWidth={2} />
                         AI Reverse Search
                       </>
                     )}
@@ -858,10 +867,7 @@ export default function ReportIssue() {
                     </span>
                   ) : (
                     <>
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                      </svg>
+                      <Icon paths={MAP_PIN_ICON} className="h-4 w-4" strokeWidth={2} />
                       AI Model se location trace karo (photo se hi)
                     </>
                   )}
@@ -892,9 +898,7 @@ export default function ReportIssue() {
           {manualLocation && !locationFromExif && (
             <div className="mt-4 animate-slide-up rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4">
               <div className="flex items-start gap-3">
-                <svg className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" fill="currentColor" viewBox="0 0 20 20">
-                  <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                </svg>
+                <Icon {...CHECK_CIRCLE_FILLED} className="mt-0.5 h-5 w-5 shrink-0 text-emerald-400" />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-bold text-emerald-300">Photo ki location set</p>
                   <p className="mt-0.5 font-mono text-xs text-emerald-200/80">
@@ -947,15 +951,9 @@ export default function ReportIssue() {
               <div className="grid grid-flow-col auto-cols-max items-start gap-3">
                 <div className={`grid h-10 w-10 place-items-center rounded-full text-lg ${result.isDuplicate ? 'bg-amber-500/20' : 'bg-emerald-500/20'}`}>
                   {result.isDuplicate ? (
-                    <Icon
-                      paths={['M12 9v4m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z']}
-                      className="h-5 w-5"
-                    />
+                    <Icon paths={WARNING_ICON} className="h-5 w-5" />
                   ) : (
-                    <Icon
-                      paths={['M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z']}
-                      className="h-5 w-5"
-                    />
+                    <Icon paths={CHECK_ICON} className="h-5 w-5" />
                   )}
                 </div>
                 <div className="min-w-0">
@@ -984,7 +982,7 @@ export default function ReportIssue() {
                       {result.complaint.priorityReason && (
                         <p className="pt-1 text-slate-400">
                           Why <span className="font-semibold text-white">{result.complaint.priority}</span>?{' '}
-                          <span dangerouslySetInnerHTML={{ __html: highlightReason(result.complaint.priorityReason) }} />
+                          <span className="text-slate-300">{result.complaint.priorityReason}</span>
                         </p>
                       )}
                       {result.aiAnalysis?.executedAction && !result.isDuplicate && (
@@ -1091,9 +1089,7 @@ export default function ReportIssue() {
                     </span>
                   ) : (
                     <span className="grid grid-flow-col auto-cols-max items-center justify-center gap-2">
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                      </svg>
+                      <Icon paths={SEND_ICON} className="h-4 w-4" strokeWidth={2} />
                       Submit Report
                     </span>
                   )}
@@ -1112,25 +1108,16 @@ function MapPicker({ initial, onPick }) {
   const mapRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    let L = null;
+    const center = initial ? [initial.lat, initial.lng] : DEFAULT_CENTER;
+    const zoom = initial ? 14 : DEFAULT_ZOOM;
 
-    const initMap = () => {
-      if (cancelled || mapRef.current || !containerRef.current) return;
-      L = window.L;
-      const center = initial
-        ? [initial.lat, initial.lng]
-        : [21.0, 78.0];
-      const zoom = initial ? 14 : 5;
+    const cancel = loadLeaflet((L) => {
+      if (mapRef.current || !containerRef.current) return;
       const map = L.map(containerRef.current, { center, zoom });
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map);
+      addTileLayer(L, map);
 
       const marker = L.marker(center, { draggable: true }).addTo(map);
-      const emit = (pos) => {
-        onPick?.(pos.lat, pos.lng);
-      };
+      const emit = (pos) => onPick?.(pos.lat, pos.lng);
       marker.on('dragend', () => emit(marker.getLatLng()));
       map.on('click', (e) => {
         const loc = { lat: e.latlng.lat, lng: e.latlng.lng };
@@ -1138,41 +1125,16 @@ function MapPicker({ initial, onPick }) {
         emit(loc);
       });
       mapRef.current = map;
-    };
-
-    let script = document.getElementById('leaflet-js');
-    if (script) {
-      initMap();
-      return () => {
-        cancelled = true;
-        if (mapRef.current) {
-          mapRef.current.remove();
-          mapRef.current = null;
-        }
-      };
-    }
-
-    const link = document.createElement('link');
-    link.id = 'leaflet-css';
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(link);
-    script = document.createElement('script');
-    script.id = 'leaflet-js';
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => {
-      if (!window.L) return;
-      setTimeout(initMap, 0);
-    };
-    document.body.appendChild(script);
+    });
 
     return () => {
-      cancelled = true;
+      cancel();
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   return (
@@ -1206,9 +1168,7 @@ function Step({ active, done, label }) {
           : 'bg-slate-800 text-slate-500'
       }`}>
         {done ? (
-          <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-          </svg>
+          <Icon paths={[TICK_PATH]} className="h-4 w-4" strokeWidth={3} />
         ) : (
           label[0]
         )}
@@ -1230,10 +1190,6 @@ function priorityColor(priority) {
     default:
       return 'bg-amber-500/20 text-amber-300';
   }
-}
-
-function highlightReason(reason) {
-  return reason.replace(/(critical|high|medium|low) priority/, '<span class="font-semibold text-white">$1 priority</span>');
 }
 
 function Timeline({ events = [], className = '' }) {

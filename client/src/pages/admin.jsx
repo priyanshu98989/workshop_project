@@ -1,37 +1,27 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import axios from 'axios';
 import Head from 'next/head';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { API_URL, authHeaders, getUser, clearAuth } from '../lib/auth';
+import { loadLeaflet, addTileLayer, fitToMarkers, escapeHtml, DEFAULT_CENTER, DEFAULT_ZOOM } from '../lib/leaflet';
+import {
+  categoryMeta,
+  priorityMeta,
+  statusColor,
+  STATUS_FILTERS,
+  PRIORITY_FILTERS,
+  DEFAULT_CATEGORY,
+  DEFAULT_PRIORITY,
+  DEFAULT_STATUS_COLOR,
+} from '../lib/complaintMeta';
 import ThemeToggle from '../components/ThemeToggle';
 import Icon from '../components/Icon';
 
-const categoryMeta = {
-  pothole: { label: 'Pothole', color: 'bg-amber-500/20 text-amber-300' },
-  garbage: { label: 'Garbage', color: 'bg-lime-500/20 text-lime-300' },
-  'water leakage': { label: 'Water Leakage', color: 'bg-cyan-500/20 text-cyan-300' },
-  'broken streetlight': { label: 'Broken Light', color: 'bg-yellow-500/20 text-yellow-300' },
-  'road obstruction': { label: 'Obstruction', color: 'bg-orange-500/20 text-orange-300' },
-  'drainage blockage': { label: 'Drainage Block', color: 'bg-blue-500/20 text-blue-300' },
-  other: { label: 'Other', color: 'bg-purple-500/20 text-purple-300' },
-};
-
-const priorityMeta = {
-  critical: { label: 'Critical', color: 'bg-purple-500/20 text-purple-300' },
-  high: { label: 'High', color: 'bg-red-500/20 text-red-300' },
-  medium: { label: 'Medium', color: 'bg-amber-500/20 text-amber-300' },
-  low: { label: 'Low', color: 'bg-emerald-500/20 text-emerald-300' },
-};
-
-const statusColor = {
-  Pending: 'bg-slate-700/50 text-slate-200',
-  Acknowledged: 'bg-blue-500/20 text-blue-300',
-  'In Progress': 'bg-amber-500/20 text-amber-300',
-  Resolved: 'bg-emerald-500/20 text-emerald-300',
-};
-
-const STATUS_FILTERS = ['Pending', 'Acknowledged', 'In Progress', 'Resolved'];
+const ICON_DOCUMENT = ['M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z'];
+const ICON_DEPARTMENT = ['M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4'];
+const ICON_CATEGORY = ['M4 6h16M4 12h16M4 18h16'];
+const ICON_CLOSE = ['M6 18L18 6M6 6l12 12'];
 
 const timeframe = (dateStr) => {
   const diff = Date.now() - new Date(dateStr).getTime();
@@ -45,6 +35,13 @@ const getImage = (c) => {
   if (!img || !img.url) return null;
   return img.url.startsWith('https://via.placeholder.com') ? null : img.url;
 };
+
+const byCountDesc = (a, b) => b[1] - a[1];
+
+const popupHtml = (p) =>
+  `<b>${escapeHtml(p.title || 'Complaint')}</b><br/>${escapeHtml(p.category)} · ${escapeHtml(p.status)}` +
+  `<br/>Priority: <b>${escapeHtml(p.priority || DEFAULT_PRIORITY)}</b>` +
+  (p.department ? `<br/>Dept: ${escapeHtml(p.department)}` : '');
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -60,15 +57,17 @@ export default function AdminDashboard() {
   const user = getUser();
 
   const fetchAll = async () => {
+    setLoading(true);
+    setError(null);
     try {
       const [complaintsRes, statsRes] = await Promise.all([
-        axios.get(`${API_URL}/api/complaints`),
-        axios.get(`${API_URL}/api/complaints/stats`),
+        axios.get(`${API_URL}/api/complaints`, { headers: authHeaders() }),
+        axios.get(`${API_URL}/api/complaints/stats`, { headers: authHeaders() }),
       ]);
       setComplaints(complaintsRes.data.data || []);
       setStats(statsRes.data.data || null);
     } catch (err) {
-      setError(err.message);
+      setError(err.response?.data?.error || err.message);
     } finally {
       setLoading(false);
     }
@@ -78,31 +77,46 @@ export default function AdminDashboard() {
     fetchAll();
   }, []);
 
-  const departments = stats?.byDepartment
-    ? Object.entries(stats.byDepartment).sort((a, b) => b[1] - a[1])
-    : [];
+  const departments = useMemo(
+    () => (stats?.byDepartment ? Object.entries(stats.byDepartment).sort(byCountDesc) : []),
+    [stats]
+  );
 
-  const filtered = complaints.filter((c) => {
-    if (statusFilter !== 'all' && c.status !== statusFilter) return false;
-    if (categoryFilter !== 'all' && c.category !== categoryFilter) return false;
-    if (departmentFilter !== 'all' && (c.departmentName || 'Unassigned') !== departmentFilter) return false;
-    if (priorityFilter !== 'all' && (c.priority || 'medium') !== priorityFilter) return false;
-    return true;
-  });
+  const categories = useMemo(
+    () => Object.entries(stats?.byCategory || {}).sort(byCountDesc),
+    [stats]
+  );
 
-  const points = filtered
-    .filter((c) => c.location?.coordinates?.length === 2)
-    .map((c) => ({
-      id: c._id,
-      lat: c.location.coordinates[1],
-      lng: c.location.coordinates[0],
-      title: c.title,
-      category: c.category,
-      severity: c.severity,
-      priority: c.priority,
-      status: c.status,
-      department: c.departmentName,
-    }));
+  const filtered = useMemo(
+    () =>
+      complaints.filter((c) => {
+        if (statusFilter !== 'all' && c.status !== statusFilter) return false;
+        if (categoryFilter !== 'all' && c.category !== categoryFilter) return false;
+        if (departmentFilter !== 'all' && (c.departmentName || 'Unassigned') !== departmentFilter) return false;
+        if (priorityFilter !== 'all' && (c.priority || DEFAULT_PRIORITY) !== priorityFilter) return false;
+        return true;
+      }),
+    [complaints, statusFilter, categoryFilter, departmentFilter, priorityFilter]
+  );
+
+  // Memoized so ComplaintMap's [points] effect only re-paints on real changes.
+  const points = useMemo(
+    () =>
+      filtered
+        .filter((c) => c.location?.coordinates?.length === 2)
+        .map((c) => ({
+          id: c._id,
+          lat: c.location.coordinates[1],
+          lng: c.location.coordinates[0],
+          title: c.title,
+          category: c.category,
+          severity: c.severity,
+          priority: c.priority,
+          status: c.status,
+          department: c.departmentName,
+        })),
+    [filtered]
+  );
 
   return (
     <>
@@ -164,7 +178,7 @@ export default function AdminDashboard() {
           {error && (
             <div className="glass-card border-red-500/30 py-12 text-center">
               <div className="mx-auto grid h-12 w-12 place-items-center rounded-xl bg-red-500/10">
-                <Icon paths={['M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z']} className="h-6 w-6 text-red-400" />
+                <Icon paths={ICON_DOCUMENT} className="h-6 w-6 text-red-400" />
               </div>
               <p className="mt-3 text-sm font-medium text-red-300">Could not reach the server</p>
               <p className="mt-1 text-xs text-slate-500">{error}</p>
@@ -195,7 +209,7 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
                 <BreakdownCard
                   title="By Department"
-                  icon={['M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4']}
+                  icon={ICON_DEPARTMENT}
                   rows={departments}
                   onFilter={(name) => {
                     setDepartmentFilter((prev) => (prev === name ? 'all' : name));
@@ -204,8 +218,8 @@ export default function AdminDashboard() {
                 />
                 <BreakdownCard
                   title="By Category"
-                  icon={['M4 6h16M4 12h16M4 18h16']}
-                  rows={Object.entries(stats?.byCategory || []).sort((a, b) => b[1] - a[1])}
+                  icon={ICON_CATEGORY}
+                  rows={categories}
                   onFilter={(name) => {
                     setCategoryFilter((prev) => (prev === name ? 'all' : name));
                   }}
@@ -235,10 +249,9 @@ export default function AdminDashboard() {
                 </FilterSelect>
                 <FilterSelect label="Priority" value={priorityFilter} onChange={setPriorityFilter}>
                   <option value="all">All</option>
-                  <option value="critical">Critical</option>
-                  <option value="high">High</option>
-                  <option value="medium">Medium</option>
-                  <option value="low">Low</option>
+                  {PRIORITY_FILTERS.map((p) => (
+                    <option key={p} value={p}>{priorityMeta[p].label}</option>
+                  ))}
                 </FilterSelect>
               </div>
 
@@ -262,8 +275,8 @@ export default function AdminDashboard() {
                   </div>
                 )}
                 {filtered.map((c) => {
-                  const cat = categoryMeta[c.category] || categoryMeta.other;
-                  const pr = priorityMeta[c.priority] || priorityMeta.medium;
+                  const cat = categoryMeta[c.category] || DEFAULT_CATEGORY;
+                  const pr = priorityMeta[c.priority] || priorityMeta[DEFAULT_PRIORITY];
                   const photo = getImage(c);
                   return (
                     <div key={c._id} className="glass-card flex gap-4 p-4">
@@ -277,7 +290,7 @@ export default function AdminDashboard() {
                         </button>
                       ) : (
                         <div className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-slate-800/50">
-                          <Icon paths={cat.icon || []} className="h-7 w-7 text-slate-400" />
+                          <Icon paths={cat.icon} className="h-7 w-7 text-slate-400" strokeWidth={2} />
                         </div>
                       )}
                       <div className="min-w-0 flex-1">
@@ -288,7 +301,7 @@ export default function AdminDashboard() {
                         <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(auto,auto))] gap-2">
                           <span className={`badge ${cat.color}`}>{cat.label}</span>
                           <span className={`badge ${pr.color}`}>{pr.label} priority</span>
-                          <span className={`badge ${statusColor[c.status] || statusColor.Pending}`}>{c.status}</span>
+                          <span className={`badge ${statusColor[c.status] || DEFAULT_STATUS_COLOR}`}>{c.status}</span>
                           {c.departmentName && c.departmentName !== 'Unassigned' && (
                             <span className="badge bg-cyan-500/15 text-cyan-300">{c.departmentName}</span>
                           )}
@@ -324,9 +337,7 @@ export default function AdminDashboard() {
               onClick={() => setViewingImage(null)}
               className="absolute -top-3 -right-3 grid h-9 w-9 place-items-center rounded-full bg-slate-800 text-slate-300 shadow-lg hover:bg-red-500/20 hover:text-red-300"
             >
-              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-              </svg>
+              <Icon paths={ICON_CLOSE} className="h-5 w-5" strokeWidth={2} />
             </button>
             <img src={viewingImage} alt="Complaint" className="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain" />
           </div>
@@ -396,85 +407,49 @@ function FilterSelect({ label, value, onChange, children }) {
   );
 }
 
+function renderMarkers(L, map, points, markersRef) {
+  markersRef.current.forEach((m) => m.remove());
+  markersRef.current = points.map((p) =>
+    L.marker([p.lat, p.lng]).addTo(map).bindPopup(popupHtml(p))
+  );
+  fitToMarkers(L, map, markersRef.current);
+}
+
 function ComplaintMap({ points }) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const markersRef = useRef([]);
+  // Read inside the async Leaflet callback so a late script load paints the
+  // latest points rather than the ones captured on first render.
+  const pointsRef = useRef(points);
+  pointsRef.current = points;
+
+  const createMap = useCallback((L) => {
+    if (mapRef.current || !containerRef.current) return;
+    const current = pointsRef.current;
+    const center = current.length ? [current[0].lat, current[0].lng] : DEFAULT_CENTER;
+    const map = L.map(containerRef.current, { center, zoom: current.length ? 13 : DEFAULT_ZOOM });
+    addTileLayer(L, map);
+    mapRef.current = map;
+    renderMarkers(L, map, current, markersRef);
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-
-    const paint = () => {
-      if (!window.L || cancelled || !containerRef.current) return;
-      const center = points.length ? [points[0].lat, points[0].lng] : [21.0, 78.0];
-      const map = window.L.map(containerRef.current, { center, zoom: points.length ? 13 : 5 });
-      window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors',
-      }).addTo(map);
-      mapRef.current = map;
-      markersRef.current = points.map((p) =>
-        window.L.marker([p.lat, p.lng]).addTo(map).bindPopup(
-          `<b>${p.title || 'Complaint'}</b><br/>${p.category} · ${p.status}<br/>Priority: <b>${p.priority || 'medium'}</b>${p.department ? `<br/>Dept: ${p.department}` : ''}`
-        )
-      );
-      if (points.length > 1) {
-        try {
-          map.fitBounds(window.L.featureGroup(markersRef.current).getBounds(), { padding: [40, 40] });
-        } catch {}
-      }
-    };
-
-    let script = document.getElementById('leaflet-js');
-    if (script) {
-      requestAnimationFrame(paint);
-      return () => {
-        cancelled = true;
-        if (mapRef.current) {
-          mapRef.current.remove();
-          mapRef.current = null;
-        }
-        markersRef.current = [];
-      };
-    }
-
-    const link = document.createElement('link');
-    link.id = 'leaflet-css';
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(link);
-    script = document.createElement('script');
-    script.id = 'leaflet-js';
-    script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.onload = () => requestAnimationFrame(paint);
-    document.body.appendChild(script);
-
+    const cancel = loadLeaflet(createMap);
     return () => {
-      cancelled = true;
+      cancel();
       if (mapRef.current) {
         mapRef.current.remove();
         mapRef.current = null;
       }
       markersRef.current = [];
     };
-  }, []);
+  }, [createMap]);
 
-  // Re-paint markers when points change
   useEffect(() => {
-    if (!mapRef.current || !window.L) {
-      // Leaflet not ready yet — the paint() above will handle the first pass.
-      return;
-    }
-    markersRef.current.forEach((m) => m.remove());
-    markersRef.current = points.map((p) =>
-      window.L.marker([p.lat, p.lng]).addTo(mapRef.current).bindPopup(
-        `<b>${p.title || 'Complaint'}</b><br/>${p.category} · ${p.status}<br/>Priority: <b>${p.priority || 'medium'}</b>${p.department ? `<br/>Dept: ${p.department}` : ''}`
-      )
-    );
-    if (points.length > 1) {
-      try {
-        mapRef.current.fitBounds(window.L.featureGroup(markersRef.current).getBounds(), { padding: [40, 40] });
-      } catch {}
-    }
+    const L = window.L;
+    if (!L || !mapRef.current) return; // createMap paints the first batch on load.
+    renderMarkers(L, mapRef.current, points, markersRef);
   }, [points]);
 
   return (
