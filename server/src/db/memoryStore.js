@@ -149,12 +149,11 @@ function stats() {
     'Any',
   ];
   const count = (fn) => complaints.filter(fn).length;
+  const byStatus = {};
+  for (const s of statuses) byStatus[s] = count((c) => c.status === s);
   return {
     total: complaints.length,
-    byStatus: statuses.reduce(
-      (acc, s) => ({ ...acc, [s]: count((c) => c.status === s) }),
-      {}
-    ),
+    byStatus,
     byCategory: countBy('category'),
     byDepartment: countBy('departmentName'),
     bySeverity: countBy('severity'),
