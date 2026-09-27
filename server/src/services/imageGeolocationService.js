@@ -16,6 +16,16 @@ const OSV5M_URL = process.env.OSV5M_URL || 'http://127.0.0.1:8787';
 const OSV5M_ENABLED = process.env.OSV5M_ENABLED === 'true';
 const OSV5M_DEFAULT_CONFIDENCE = Number(process.env.OSV5M_DEFAULT_CONFIDENCE || 0.55);
 
+// Number(null) and Number('') are both 0, and 0 passes every isFinite check, so
+// a plain Number.isFinite(Number(v)) guard silently turns an explicit null into
+// the coordinate 0,0. The model is asked for "number or null", so null has to
+// survive as null for the geocoder fallback below to still run.
+function toFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 function parseDataUrl(dataUrl) {
   if (!dataUrl || typeof dataUrl !== 'string') return null;
   const match = dataUrl.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
@@ -40,27 +50,26 @@ function sanitize(raw) {
 async function inferWithOsv5m(imageDataUrl) {
   if (!OSV5M_ENABLED || !imageDataUrl) return null;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 25000);
     const res = await fetch(`${OSV5M_URL}/infer`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ image_base64: imageDataUrl }),
-      signal: controller.signal,
+      signal: AbortSignal.timeout(25000),
     });
-    clearTimeout(timer);
     if (!res.ok) throw new Error(`OSV-5M service returned ${res.status}`);
     const parsed = await res.json();
     if (!parsed.success) throw new Error(parsed.error || 'OSV-5M inference failed');
 
     const { lat, lng, confidence } = parsed.data || {};
-    if (![lat, lng].every((v) => Number.isFinite(Number(v)))) return null;
+    const latNum = toFiniteNumber(lat);
+    const lngNum = toFiniteNumber(lng);
+    if (latNum === null || lngNum === null) return null;
 
-    const rev = await reverseGeocode(lat, lng);
+    const rev = await reverseGeocode(latNum, lngNum);
     return {
       found: true,
-      lat: Number(lat),
-      lng: Number(lng),
+      lat: latNum,
+      lng: lngNum,
       source: 'osv5m',
       place_name: rev?.displayName || 'OSV-5M estimated location',
       city: rev?.city || null,
@@ -68,7 +77,7 @@ async function inferWithOsv5m(imageDataUrl) {
       country: rev?.country || null,
       area_hint: null,
       landmarks: ['OSV-5M visual geolocation'],
-      confidence: Number.isFinite(Number(confidence)) ? Number(confidence) : OSV5M_DEFAULT_CONFIDENCE,
+      confidence: toFiniteNumber(confidence) ?? OSV5M_DEFAULT_CONFIDENCE,
       evidence: 'OSV-5M (OpenStreetView-5M) model ne photo pixels se global location predict ki.',
       model: 'osv5m',
     };
@@ -118,8 +127,8 @@ async function inferLocationFromImage({ imageDataUrl, imageBase64, mimeType }) {
       .join(', ')
       .trim();
 
-    let lat = Number.isFinite(Number(parsedResult.lat)) ? Number(parsedResult.lat) : null;
-    let lng = Number.isFinite(Number(parsedResult.lng)) ? Number(parsedResult.lng) : null;
+    let lat = toFiniteNumber(parsedResult.lat);
+    let lng = toFiniteNumber(parsedResult.lng);
 
     if ((lat == null || lng == null) && placeQuery) {
       const geocoded = await geocodePlace(placeQuery, 1);
@@ -131,9 +140,10 @@ async function inferLocationFromImage({ imageDataUrl, imageBase64, mimeType }) {
     }
 
     if (lat == null || lng == null) {
+      const name = parsedResult.place_name || 'jo naam mila';
       return {
         found: false,
-        message: 'Location `{place_name}` mila, lekin coordinates resolve nahi hua.',
+        message: `Location "${name}" mila, lekin coordinates resolve nahi hua.`,
         place_name: parsedResult.place_name || null,
         evidence: parsedResult.evidence || null,
       };

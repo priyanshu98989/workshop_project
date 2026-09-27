@@ -7,27 +7,73 @@ const SERPAPI_URL = 'https://serpapi.com/search.json';
 const UA_STRING =
   'CivicEye/2.0 (complaint-location-lookup; contact: admin@civiceye.local)';
 
-async function geocodePlace(query, maxResults = 5) {
-  if (!query || typeof query !== 'string' || query.trim().length < 2) {
-    return [];
-  }
-  try {
-    const url = new URL(NOMINATIM_URL);
-    url.searchParams.set('q', query.trim());
-    url.searchParams.set('format', 'json');
-    url.searchParams.set('limit', String(maxResults));
-    url.searchParams.set('addressdetails', '1');
+// Nominatim's usage policy allows at most one request per second per client and
+// answers 403/429 to clients that exceed it, which takes location search down
+// for everyone behind the same IP. Calls are queued to a minimum interval, and
+// repeat lookups inside the cache window never leave the process.
+const MIN_INTERVAL_MS = 1100;
+const CACHE_TTL_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 10_000;
+const MAX_QUERY_LENGTH = 200;
 
+const cache = new Map();
+let lastRequestAt = 0;
+let queue = Promise.resolve();
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Number(null) and Number('') are 0 and pass an isFinite check, so null has to
+// be rejected explicitly or a missing coordinate becomes 0,0.
+function toFiniteNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function nominatimGet(url, label) {
+  const key = url.toString();
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.data;
+
+  const run = queue.then(async () => {
+    const wait = MIN_INTERVAL_MS - (Date.now() - lastRequestAt);
+    if (wait > 0) await sleep(wait);
+    lastRequestAt = Date.now();
     const res = await fetch(url, {
       headers: {
         'User-Agent': UA_STRING,
         Accept: 'application/json',
       },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) {
-      throw new Error(`Nominatim returned ${res.status}`);
-    }
-    const data = await res.json();
+    if (!res.ok) throw new Error(`${label} returned ${res.status}`);
+    return res.json();
+  });
+  // Keep the chain alive when this call rejects, so one failure cannot stall
+  // every queued lookup behind it.
+  queue = run.then(
+    () => {},
+    () => {}
+  );
+
+  const data = await run;
+  cache.set(key, { at: Date.now(), data });
+  return data;
+}
+
+async function geocodePlace(query, maxResults = 5) {
+  const trimmed = typeof query === 'string' ? query.trim() : '';
+  if (trimmed.length < 2 || trimmed.length > MAX_QUERY_LENGTH) {
+    return [];
+  }
+  try {
+    const url = new URL(NOMINATIM_URL);
+    url.searchParams.set('q', trimmed);
+    url.searchParams.set('format', 'json');
+    url.searchParams.set('limit', String(maxResults));
+    url.searchParams.set('addressdetails', '1');
+
+    const data = await nominatimGet(url, 'Nominatim');
     return (Array.isArray(data) ? data : []).map((item) => ({
       lat: parseFloat(item.lat),
       lon: parseFloat(item.lon),
@@ -44,31 +90,25 @@ async function geocodePlace(query, maxResults = 5) {
 }
 
 async function reverseGeocode(lat, lng) {
-  if (![lat, lng].every((v) => Number.isFinite(Number(v)))) {
-    return null;
-  }
+  const latNum = toFiniteNumber(lat);
+  const lngNum = toFiniteNumber(lng);
+  if (latNum === null || lngNum === null) return null;
+  if (Math.abs(latNum) > 90 || Math.abs(lngNum) > 180) return null;
   try {
     const url = new URL(NOMINATIM_REVERSE_URL);
-    url.searchParams.set('lat', String(lat));
-    url.searchParams.set('lon', String(lng));
+    url.searchParams.set('lat', String(latNum));
+    url.searchParams.set('lon', String(lngNum));
     url.searchParams.set('format', 'json');
     url.searchParams.set('addressdetails', '1');
     url.searchParams.set('zoom', '18');
 
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': UA_STRING,
-        Accept: 'application/json',
-      },
-    });
-    if (!res.ok) {
-      throw new Error(`Nominatim reverse returned ${res.status}`);
-    }
-    const data = await res.json();
-    if (!data || !data.lat || !data.lon) return null;
+    const data = await nominatimGet(url, 'Nominatim reverse');
+    const latOut = toFiniteNumber(data?.lat);
+    const lonOut = toFiniteNumber(data?.lon);
+    if (latOut === null || lonOut === null) return null;
     return {
-      lat: parseFloat(data.lat),
-      lon: parseFloat(data.lon),
+      lat: latOut,
+      lon: lonOut,
       displayName: data.display_name || null,
       city: data.address?.city || data.address?.town || data.address?.village || null,
       state: data.address?.state || null,
