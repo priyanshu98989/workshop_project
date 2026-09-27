@@ -1,5 +1,6 @@
 const Department = require('../models/Department');
 const { isMemoryMode } = require('../db/connect');
+const logger = require('../utils/logger');
 const {
   DEPARTMENT_ROUTING,
   UNASSIGNED_DEPARTMENT,
@@ -21,17 +22,26 @@ async function resolveDepartment(category) {
   if (isMemoryMode()) return { _id: name, name };
 
   try {
-    let dept = await Department.findOne({ name }).select('_id name').lean();
-    if (!dept) {
-      await Department.updateOne(
-        { name },
-        { $setOnInsert: { name, categories: [category] } },
-        { upsert: true }
-      );
-      dept = await Department.findOne({ name }).select('_id name').lean();
-    }
-    return dept;
+    // One atomic upsert instead of findOne -> updateOne(upsert) -> findOne.
+    // The read-then-write pair raced with itself: two complaints routed to the
+    // same new department could both read "not found" and both attempt the
+    // insert, and since name is uniquely indexed the loser got a duplicate key
+    // error and the complaint was stored with department: null.
+    return await Department.findOneAndUpdate(
+      { name },
+      { $setOnInsert: { name, categories: [category] } },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    )
+      .select('_id name')
+      .lean();
   } catch (err) {
+    if (err.code === 11000) {
+      const existing = await Department.findOne({ name }).select('_id name').lean();
+      if (existing) return existing;
+    }
+    // Previously swallowed outright, so a database failure here was
+    // indistinguishable from "no department configured".
+    logger.warn(`Department resolution failed for "${name}" (${err.message})`);
     return isMemoryMode() ? { _id: name, name } : null;
   }
 }
@@ -43,7 +53,12 @@ function computePriority(severity, nearbyReportCount) {
   const score = base + nearby;
 
   let level = 'low';
-  for (const cutoff of PRIORITY_SCORE_CUTOFFS) {
+  // Scanned high to low so the first cutoff the score clears wins. The order is
+  // taken from the config rather than assumed, because reading the cutoffs
+  // ascending would let the { min: 0 } entry match everything and silently pin
+  // every complaint to low priority.
+  const cutoffs = [...PRIORITY_SCORE_CUTOFFS].sort((a, b) => b.min - a.min);
+  for (const cutoff of cutoffs) {
     if (score >= cutoff.min) {
       level = cutoff.level;
       break;
