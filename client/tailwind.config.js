@@ -1,6 +1,9 @@
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ['./src/pages/**/*.{js,jsx}', './src/components/**/*.{js,jsx}'],
+  // src/lib holds shared Tailwind class strings (complaintMeta.js category,
+  // priority and status colours), so the whole src tree must be scanned — a
+  // pages/components-only glob silently purges them from the build.
+  content: ['./src/**/*.{js,jsx,ts,tsx}'],
   theme: {
     extend: {
       colors: {
