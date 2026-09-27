@@ -104,6 +104,11 @@ async function generate(options = {}) {
       lastError = err;
       // Timeouts and socket resets are worth another go just like 429/5xx.
       const retryable = err.retryable || err.name === 'AbortError' || err.name === 'TypeError';
+      // The provider's explanation is stripped from err.message so it never
+      // reaches the client, so it has to be logged here or it is lost entirely.
+      if (err.detail) {
+        logger.warn(`Gemini upstream detail: ${err.detail.slice(0, 500)}`);
+      }
       if (!retryable || attempt === retries) throw err;
       const delay = attempt * 2000;
       logger.warn(
